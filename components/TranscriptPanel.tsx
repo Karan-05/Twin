@@ -5,7 +5,8 @@ import { useMeetingStore } from '@/lib/store'
 import { transcribeAudio } from '@/lib/transcription'
 import { generateId, formatTimestamp } from '@/lib/utils'
 
-const CHUNK_INTERVAL_MS = 3000
+const CHUNK_INTERVAL_MS = 5000
+const MIN_FRAGMENT_CHARS = 40
 
 function getBestMimeType(): string {
   const types = [
@@ -43,8 +44,12 @@ export default function TranscriptPanel() {
     setIsRecording,
     setSessionStartTime,
     addTranscriptChunk,
+    appendToLastTranscriptChunk,
     apiKey,
   } = useMeetingStore()
+
+  const transcriptRef = useRef(transcript)
+  useEffect(() => { transcriptRef.current = transcript }, [transcript])
 
   const streamRef = useRef<MediaStream | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -71,16 +76,22 @@ export default function TranscriptPanel() {
     if (chunksRef.current.length === 0) return
     const blob = new Blob(chunksRef.current, { type: mimeType })
     chunksRef.current = []
-    if (blob.size < 1000) return
+    if (blob.size < 500) return
     try {
       setIsProcessing(true)
       const text = await transcribeAudio(blob, apiKey, mimeType)
-      if (text.trim()) {
-        addTranscriptChunk({
-          id: generateId(),
-          text: text.trim(),
-          timestamp: formatTimestamp(new Date()),
-        })
+      const cleaned = text.trim()
+      if (cleaned) {
+        // Merge short fragments into the previous chunk for readability
+        if (cleaned.length < MIN_FRAGMENT_CHARS && transcriptRef.current.length > 0) {
+          appendToLastTranscriptChunk(cleaned)
+        } else {
+          addTranscriptChunk({
+            id: generateId(),
+            text: cleaned,
+            timestamp: formatTimestamp(new Date()),
+          })
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Transcription failed'
@@ -89,7 +100,7 @@ export default function TranscriptPanel() {
     } finally {
       setIsProcessing(false)
     }
-  }, [apiKey, addTranscriptChunk])
+  }, [apiKey, addTranscriptChunk, appendToLastTranscriptChunk])
 
   const cycleRecorder = useCallback(() => {
     const recorder = mediaRecorderRef.current

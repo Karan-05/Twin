@@ -20,26 +20,58 @@ function TypingIndicator() {
   )
 }
 
-// Renders inline markdown: **bold**, *italic*, `code`
-function renderInline(text: string, key?: string | number): React.ReactNode {
+// **bold** renders in lime-dark for maximum eye-catch; *italic*, `code` also styled
+function renderInline(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`)/g)
   if (parts.length === 1) return text
   return (
-    <span key={key}>
+    <>
       {parts.map((part, i) => {
         if (part.startsWith('**') && part.endsWith('**'))
-          return <strong key={i} className="font-semibold text-text-primary">{part.slice(2, -2)}</strong>
+          return <strong key={i} className="font-bold text-[#4d7c0f]">{part.slice(2, -2)}</strong>
         if (part.startsWith('*') && part.endsWith('*'))
-          return <em key={i} className="italic">{part.slice(1, -1)}</em>
+          return <em key={i} className="italic text-text-primary">{part.slice(1, -1)}</em>
         if (part.startsWith('`') && part.endsWith('`'))
-          return <code key={i} className="bg-surface-tertiary text-accent-dark font-mono text-xs px-1 py-0.5 rounded">{part.slice(1, -1)}</code>
+          return <code key={i} className="bg-accent-bg text-[#4d7c0f] font-mono text-[11px] px-1.5 py-0.5 rounded border border-accent-border">{part.slice(1, -1)}</code>
         return part
       })}
-    </span>
+    </>
   )
 }
 
-// Renders a full markdown message: headers, bullets, numbered lists, paragraphs
+function TableBlock({ lines }: { lines: string[] }) {
+  const rows = lines.map((l) => l.split('|').slice(1, -1).map((c) => c.trim()))
+  const dataRows = rows.filter((r) => !r.every((c) => /^[-: ]+$/.test(c)))
+  const [header, ...body] = dataRows
+  if (!header?.length) return null
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border my-2">
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="bg-accent-bg">
+            {header.map((cell, i) => (
+              <th key={i} className="px-3 py-2 text-left font-semibold text-[#4d7c0f] border-b border-accent-border">
+                {renderInline(cell)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((row, ri) => (
+            <tr key={ri} className={ri % 2 === 0 ? 'bg-surface-primary' : 'bg-surface-secondary'}>
+              {row.map((cell, ci) => (
+                <td key={ci} className="px-3 py-2 text-text-secondary border-b border-border last:border-b-0">
+                  {renderInline(cell)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
   if (isUser) {
     return <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
@@ -54,24 +86,51 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
     const trimmed = line.trim()
 
     if (!trimmed) {
-      if (nodes.length > 0) nodes.push(<div key={`gap-${i}`} className="h-1" />)
+      if (nodes.length > 0) nodes.push(<div key={`sp-${i}`} className="h-1.5" />)
       i++
       continue
     }
 
-    // H2/H3 headers
-    if (trimmed.startsWith('### ')) {
+    // Table block
+    if (trimmed.startsWith('|')) {
+      const tableLines: string[] = []
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        tableLines.push(lines[i])
+        i++
+      }
+      nodes.push(<TableBlock key={`tbl-${i}`} lines={tableLines} />)
+      continue
+    }
+
+    // Blockquote → key data callout (address / time / number to remember)
+    if (trimmed.startsWith('> ')) {
       nodes.push(
-        <p key={i} className="text-xs font-bold text-text-muted uppercase tracking-wider mt-2 mb-0.5">
-          {renderInline(trimmed.slice(4))}
-        </p>
+        <div key={i} className="flex items-start gap-2.5 bg-accent-bg border-l-[3px] border-accent rounded-r-xl px-3 py-2 my-1">
+          <span className="text-accent text-[8px] mt-1 flex-shrink-0">◆</span>
+          <span className="text-sm font-semibold text-text-primary leading-snug">{renderInline(trimmed.slice(2))}</span>
+        </div>
       )
       i++
       continue
     }
+
+    // "In short:" / "TL;DR" → prominent summary box — the first thing eyes hit
+    if (trimmed.match(/^\*\*(In short|TL;DR|Bottom line|Key takeaway)[:\s]/i)) {
+      nodes.push(
+        <div key={i} className="bg-accent-bg rounded-xl px-3.5 py-2.5 border border-accent-border my-1 shadow-sm">
+          <p className="text-sm font-semibold text-text-primary leading-snug">
+            {renderInline(trimmed)}
+          </p>
+        </div>
+      )
+      i++
+      continue
+    }
+
+    // H2 header — left lime bar
     if (trimmed.startsWith('## ')) {
       nodes.push(
-        <p key={i} className="text-sm font-bold text-text-primary mt-2 mb-0.5">
+        <p key={i} className="text-sm font-bold text-text-primary mt-2.5 mb-0.5 border-l-2 border-accent pl-2">
           {renderInline(trimmed.slice(3))}
         </p>
       )
@@ -79,54 +138,86 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
       continue
     }
 
-    // Numbered list: "1. item"
-    const numberedMatch = trimmed.match(/^(\d+)\.\s(.+)/)
-    if (numberedMatch) {
-      const listItems: React.ReactNode[] = []
+    // H3 header
+    if (trimmed.startsWith('### ')) {
+      nodes.push(
+        <p key={i} className="text-[11px] font-bold text-text-muted uppercase tracking-widest mt-2 mb-0.5">
+          {renderInline(trimmed.slice(4))}
+        </p>
+      )
+      i++
+      continue
+    }
+
+    // Checkbox action items — lime box with empty checkbox
+    if (trimmed.match(/^[-*]\s\[\s?\]/)) {
+      const items: React.ReactNode[] = []
+      while (i < lines.length) {
+        const t = lines[i].trim()
+        if (!t.match(/^[-*]\s\[\s?\]/)) break
+        items.push(
+          <li key={i} className="flex items-start gap-2.5 text-sm leading-relaxed">
+            <span className="w-3.5 h-3.5 rounded border-2 border-accent flex-shrink-0 mt-[3px]" />
+            <span className="text-text-secondary">{renderInline(t.replace(/^[-*]\s\[\s?\]\s?/, ''))}</span>
+          </li>
+        )
+        i++
+      }
+      nodes.push(
+        <ul key={`cb-${i}`} className="space-y-2 my-1.5 bg-accent-bg rounded-xl p-3 border border-accent-border">
+          {items}
+        </ul>
+      )
+      continue
+    }
+
+    // Bullet list
+    if (trimmed.match(/^[-•*]\s/)) {
+      const items: React.ReactNode[] = []
+      while (i < lines.length) {
+        const t = lines[i].trim()
+        if (!t.match(/^[-•*]\s/) || t.match(/^[-*]\s\[\s?\]/)) break
+        items.push(
+          <li key={i} className="flex items-start gap-2 text-sm leading-relaxed">
+            <span className="text-accent flex-shrink-0 mt-[6px] text-[6px]">◆</span>
+            <span className="text-text-secondary">{renderInline(t.slice(2))}</span>
+          </li>
+        )
+        i++
+      }
+      nodes.push(<ul key={`ul-${i}`} className="space-y-1 my-0.5">{items}</ul>)
+      continue
+    }
+
+    // Numbered list
+    if (trimmed.match(/^\d+\.\s/)) {
+      const items: React.ReactNode[] = []
       while (i < lines.length) {
         const t = lines[i].trim()
         const m = t.match(/^(\d+)\.\s(.+)/)
         if (!m) break
-        listItems.push(
-          <li key={i} className="flex gap-2 text-sm leading-relaxed">
-            <span className="text-accent font-semibold flex-shrink-0 w-4">{m[1]}.</span>
-            <span>{renderInline(m[2])}</span>
+        items.push(
+          <li key={i} className="flex items-start gap-2 text-sm leading-relaxed">
+            <span className="text-accent font-bold flex-shrink-0 min-w-[18px] text-right">{m[1]}.</span>
+            <span className="text-text-secondary">{renderInline(m[2])}</span>
           </li>
         )
         i++
       }
-      nodes.push(<ol key={`ol-${i}`} className="space-y-1 my-0.5">{listItems}</ol>)
-      continue
-    }
-
-    // Bullet list: "- item" or "• item" or "* item"
-    if (trimmed.match(/^[-•*]\s/)) {
-      const listItems: React.ReactNode[] = []
-      while (i < lines.length) {
-        const t = lines[i].trim()
-        if (!t.match(/^[-•*]\s/)) break
-        listItems.push(
-          <li key={i} className="flex gap-2 text-sm leading-relaxed">
-            <span className="text-accent mt-1.5 flex-shrink-0 text-xs">●</span>
-            <span>{renderInline(t.slice(2))}</span>
-          </li>
-        )
-        i++
-      }
-      nodes.push(<ul key={`ul-${i}`} className="space-y-1 my-0.5">{listItems}</ul>)
+      nodes.push(<ol key={`ol-${i}`} className="space-y-1 my-0.5">{items}</ol>)
       continue
     }
 
     // Regular paragraph
     nodes.push(
-      <p key={i} className="text-sm leading-relaxed">
+      <p key={i} className="text-sm leading-relaxed text-text-secondary">
         {renderInline(trimmed)}
       </p>
     )
     i++
   }
 
-  return <div className="space-y-1">{nodes}</div>
+  return <div className="space-y-0.5">{nodes}</div>
 }
 
 export default function ChatPanel() {

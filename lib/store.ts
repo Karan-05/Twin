@@ -53,6 +53,7 @@ interface MeetingStore {
   setSessionTitle: (title: string) => void
   setSettings: (s: AppSettings) => void
   addTranscriptChunk: (chunk: TranscriptChunk) => void
+  appendToLastTranscriptChunk: (text: string) => void
   addSuggestionBatch: (batch: SuggestionBatch) => void
   addMessage: (message: Message) => void
   updateLastMessage: (content: string) => void
@@ -82,6 +83,14 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
   setSettings: (s) => set({ settings: s }),
   addTranscriptChunk: (chunk) =>
     set((s) => ({ transcript: [...s.transcript, chunk] })),
+  appendToLastTranscriptChunk: (text) =>
+    set((s) => {
+      if (s.transcript.length === 0) return s
+      const chunks = [...s.transcript]
+      const last = chunks[chunks.length - 1]
+      chunks[chunks.length - 1] = { ...last, text: `${last.text} ${text}` }
+      return { transcript: chunks }
+    }),
   addSuggestionBatch: (batch) =>
     set((s) => ({ suggestionBatches: [batch, ...s.suggestionBatches] })),
   addMessage: (message) =>
