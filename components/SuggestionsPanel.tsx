@@ -153,57 +153,63 @@ export default function SuggestionsPanel() {
   } = useMeetingStore()
 
   const [error, setError] = useState<string | null>(null)
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const autoTriggerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isGeneratingRef = useRef(isGeneratingSuggestions)
+  // Always-fresh refs so timers never capture stale closure values
+  const transcriptRef = useRef(transcript)
+  const apiKeyRef = useRef(apiKey)
+  const settingsRef = useRef(settings)
 
-  useEffect(() => {
-    isGeneratingRef.current = isGeneratingSuggestions
-  }, [isGeneratingSuggestions])
+  useEffect(() => { isGeneratingRef.current = isGeneratingSuggestions }, [isGeneratingSuggestions])
+  useEffect(() => { transcriptRef.current = transcript }, [transcript])
+  useEffect(() => { apiKeyRef.current = apiKey }, [apiKey])
+  useEffect(() => { settingsRef.current = settings }, [settings])
 
   const triggerSuggestions = useCallback(async () => {
-    if (!apiKey || transcript.length === 0 || isGeneratingRef.current) return
+    if (!apiKeyRef.current || transcriptRef.current.length === 0 || isGeneratingRef.current) return
     setIsGeneratingSuggestions(true)
     setError(null)
     try {
-      const batch = await generateSuggestionBatch(transcript, apiKey, settings)
+      const batch = await generateSuggestionBatch(transcriptRef.current, apiKeyRef.current, settingsRef.current)
       addSuggestionBatch(batch)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate suggestions')
     } finally {
       setIsGeneratingSuggestions(false)
     }
-  }, [apiKey, transcript, settings, addSuggestionBatch, setIsGeneratingSuggestions])
+  }, [addSuggestionBatch, setIsGeneratingSuggestions])
 
-  const resetCountdown = useCallback(() => {
-    if (countdownRef.current) clearInterval(countdownRef.current)
-    if (autoTriggerRef.current) clearTimeout(autoTriggerRef.current)
+  const scheduleNext = useCallback(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
     setNextSuggestionIn(SUGGESTION_INTERVAL_S)
 
     let remaining = SUGGESTION_INTERVAL_S
-    countdownRef.current = setInterval(() => {
+    intervalRef.current = setInterval(() => {
       remaining = Math.max(0, remaining - 1)
       setNextSuggestionIn(remaining)
     }, 1000)
 
-    autoTriggerRef.current = setTimeout(async () => {
+    timeoutRef.current = setTimeout(async () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
       await triggerSuggestions()
-      resetCountdown()
+      scheduleNext()
     }, SUGGESTION_INTERVAL_S * 1000)
   }, [triggerSuggestions, setNextSuggestionIn])
 
   useEffect(() => {
     if (isRecording) {
-      resetCountdown()
+      scheduleNext()
     } else {
-      if (countdownRef.current) clearInterval(countdownRef.current)
-      if (autoTriggerRef.current) clearTimeout(autoTriggerRef.current)
+      if (intervalRef.current) clearInterval(intervalRef.current)
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
     }
     return () => {
-      if (countdownRef.current) clearInterval(countdownRef.current)
-      if (autoTriggerRef.current) clearTimeout(autoTriggerRef.current)
+      if (intervalRef.current) clearInterval(intervalRef.current)
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
     }
-  }, [isRecording]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isRecording, scheduleNext])
 
   const handleClickDetail = useCallback((suggestion: Suggestion) => {
     window.dispatchEvent(
@@ -213,7 +219,7 @@ export default function SuggestionsPanel() {
 
   const handleManualRefresh = () => {
     triggerSuggestions().then(() => {
-      if (isRecording) resetCountdown()
+      if (isRecording) scheduleNext()
     })
   }
 

@@ -24,14 +24,14 @@ Full meeting transcript:
 The participant clicked this suggestion: "{suggestion_title}"
 Full suggestion context: "{suggestion_detail}"
 
-Give a detailed, immediately useful response. Be concrete — cite specifics from the transcript where relevant. 3-5 sentences.`
+Give a detailed, immediately useful response. Be concrete — cite specifics from the transcript where relevant. 3-5 sentences. Write in plain prose — no markdown, no bold, no bullet points, no headers.`
 
 export const DEFAULT_CHAT_SYSTEM_PROMPT = `You are a sharp meeting assistant. You have full access to the live transcript of this conversation.
 
 Meeting transcript:
 {full_transcript}
 
-Answer questions concisely and directly. Reference specific things said in the meeting. If asked something not covered in the transcript, say so clearly.`
+Answer questions concisely and directly. Reference specific things said in the meeting. If asked something not covered in the transcript, say so clearly. Write in plain prose — no markdown, no bold, no bullet points, no headers.`
 
 export interface AppSettings {
   liveSuggestionPrompt: string
