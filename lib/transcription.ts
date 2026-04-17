@@ -23,6 +23,7 @@ export async function transcribeAudio(
     model: 'whisper-large-v3',
     response_format: 'json',
     language: 'en',
+    prompt: 'Live meeting transcript. Business and technical discussion. Proper nouns, product names, and numbers transcribed accurately.',
   })
   return response.text
 }
