@@ -1,6 +1,8 @@
 const WINDOW_MS = 60_000
 const SOFT_TPM_BUDGET = 5200
 const SKIP_LOW_PRIORITY = '__groq_skip_low_priority__'
+const FALLBACK_HIGH_PRIORITY = '__groq_fallback_high_priority__'
+const MAX_HIGH_PRIORITY_WAIT_MS = 3_500
 
 type Priority = 'high' | 'low'
 
@@ -99,6 +101,9 @@ async function executeWithBudget<T>(
     if (priority === 'low' && waitMs > 4_000) {
       throw new Error(SKIP_LOW_PRIORITY)
     }
+    if (priority === 'high' && waitMs > MAX_HIGH_PRIORITY_WAIT_MS) {
+      throw new Error(FALLBACK_HIGH_PRIORITY)
+    }
     await sleep(waitMs)
   }
 
@@ -113,6 +118,9 @@ async function executeWithBudget<T>(
       if (priority === 'low' && retryDelay > 4_000) {
         throw new Error(SKIP_LOW_PRIORITY)
       }
+      if (priority === 'high' && retryDelay > MAX_HIGH_PRIORITY_WAIT_MS) {
+        throw new Error(FALLBACK_HIGH_PRIORITY)
+      }
       await sleep(retryDelay)
       return executeWithBudget(promptText, maxTokens, priority, fn, attempt + 1)
     }
@@ -122,6 +130,10 @@ async function executeWithBudget<T>(
 
 export function isGroqBudgetSkip(error: unknown): boolean {
   return error instanceof Error && error.message === SKIP_LOW_PRIORITY
+}
+
+export function isGroqBudgetFallback(error: unknown): boolean {
+  return error instanceof Error && error.message === FALLBACK_HIGH_PRIORITY
 }
 
 export function withGroqTextBudget<T>(
