@@ -535,19 +535,25 @@ export async function generateSuggestionBatch(
   const transcriptSnapshot = promptChunks.map((c) => c.text).join(' ')
 
   let suggestions: Suggestion[] = []
+  let groqFailed = false
 
   try {
-    suggestions = await withRetry(
-      () => fetchBatch(systemPersona, userContent, apiKey, false, previousSuggestions, latestQuestionText),
-      2,
-      500
-    )
+    try {
+      suggestions = await withRetry(
+        () => fetchBatch(systemPersona, userContent, apiKey, false, previousSuggestions, latestQuestionText),
+        2,
+        500
+      )
+    } catch {
+      suggestions = await withRetry(
+        () => fetchBatch(systemPersona, userContent, apiKey, true, previousSuggestions, latestQuestionText),
+        2,
+        500
+      )
+    }
   } catch {
-    suggestions = await withRetry(
-      () => fetchBatch(systemPersona, userContent, apiKey, true, previousSuggestions, latestQuestionText),
-      2,
-      500
-    )
+    groqFailed = true
+    suggestions = []
   }
 
   suggestions = rankSuggestions(suggestions, promptChunks, meetingContext, options.meetingState)
@@ -589,6 +595,8 @@ export async function generateSuggestionBatch(
     id: generateId(),
     suggestions: suggestions.slice(0, 3),
     timestamp: formatTimestamp(new Date()),
-    transcriptSnapshot,
+    transcriptSnapshot: groqFailed
+      ? `${transcriptSnapshot}\n[Local fallback suggestions used due to temporary Groq unavailability]`
+      : transcriptSnapshot,
   }
 }

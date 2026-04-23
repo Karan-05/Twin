@@ -13,6 +13,54 @@ const DETAIL_CONTEXT_CHAR_BUDGET = 3600
 const CHAT_MAX_TOKENS = 700
 const DETAIL_MAX_TOKENS = 420
 
+function buildLocalChatFallback(
+  transcript: TranscriptChunk[],
+  meetingContext: MeetingContext,
+  userMessage: string
+): string {
+  const signals = extractConversationSignals(transcript.slice(-8))
+  const latest = transcript[transcript.length - 1]
+  const topic = signals.topics.slice(0, 2).join(' / ') || meetingContext.goal || 'current topic'
+  const question = signals.questions[0]
+
+  const lines = [
+    '**In short:** Use the latest thread to move the conversation on **' + topic + '** right now.',
+  ]
+
+  if (latest) {
+    lines.push(`- Latest transcript anchor: "${latest.text}" [${latest.timestamp}]`)
+  }
+
+  if (question) {
+    lines.push(`- Open question still hanging: "${question.text}" [${question.timestamp}]`) 
+  }
+
+  lines.push(`- Your question: "${userMessage}"`)
+  lines.push('- Groq is temporarily rate-limited, so this is a local fallback. Ask one clarifying question or lock one next step while the quota window resets.')
+  return lines.join('\n')
+}
+
+function buildLocalDetailedFallback(
+  suggestionTitle: string,
+  suggestionType: string,
+  suggestionDetail: string,
+  transcript: TranscriptChunk[],
+  meetingContext: MeetingContext
+): string {
+  const signals = extractConversationSignals(transcript.slice(-8))
+  const latest = transcript[transcript.length - 1]
+  const relevant = signals.questions[0] || signals.risks[0] || signals.commitments[0] || latest
+
+  return [
+    `**Evidence:** ${relevant ? `"${relevant.text}" [${relevant.timestamp}]` : 'Thin transcript — using recent context.'}`,
+    `**In short:** Use **${suggestionTitle}** as your next move and keep it concrete.`,
+    `- Suggestion type: **${suggestionType}**`,
+    `- Why this helps now: ${suggestionDetail}`,
+    latest ? `- Most recent anchor: "${latest.text}" [${latest.timestamp}]` : '- Most recent anchor: transcript still thin.',
+    meetingContext.goal ? `- [ ] Next step to lock: reconnect this to **${meetingContext.goal}** before the call moves on.` : '- [ ] Next step to lock: name the owner, action, and timing before the call moves on.',
+  ].join('\n')
+}
+
 function findFinancePressureLine(transcript: TranscriptChunk[]): TranscriptChunk | null {
   for (let index = transcript.length - 1; index >= 0; index -= 1) {
     if (/\b(finance|q4|prioriti[sz]e|priority|approval|stall internally|stalls internally)\b/i.test(transcript[index].text)) {
@@ -194,7 +242,6 @@ export async function* streamChatResponse(
   settings: AppSettings,
   meetingContext: MeetingContext = { meetingType: '', userRole: '', goal: '', prepNotes: '' }
 ): AsyncGenerator<string> {
-  const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true })
   const fullContext = buildTranscriptContext(transcript, 0, CHAT_CONTEXT_CHAR_BUDGET)
   const signalChunks = transcript.slice(-Math.max(settings.suggestionContextWindow + 2, 8))
   const systemContent = buildPrompt(settings.chatSystemPrompt, fullContext, signalChunks, meetingContext)
@@ -207,13 +254,21 @@ export async function* streamChatResponse(
   ]
   const promptText = requestMessages.map((message) => message.content).join('\n\n')
 
-  const stream = await withGroqTextBudget(promptText, CHAT_MAX_TOKENS, 'high', () => groq.chat.completions.create({
-    model: 'openai/gpt-oss-120b',
-    messages: requestMessages,
-    stream: true,
-    temperature: 0.35,
-    max_tokens: CHAT_MAX_TOKENS,
-  }))
+  const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true })
+
+  let stream
+  try {
+    stream = await withGroqTextBudget(promptText, CHAT_MAX_TOKENS, 'high', () => groq.chat.completions.create({
+      model: 'openai/gpt-oss-120b',
+      messages: requestMessages,
+      stream: true,
+      temperature: 0.35,
+      max_tokens: CHAT_MAX_TOKENS,
+    }))
+  } catch {
+    yield buildLocalChatFallback(transcript, meetingContext, messages[messages.length - 1]?.content ?? '')
+    return
+  }
 
   for await (const chunk of stream) {
     const delta = chunk.choices[0]?.delta?.content
@@ -252,16 +307,22 @@ export async function* streamDetailedAnswer(
   )
 
   const promptText = `${RESPONSE_GUARDRAILS}\n\n${prompt}`
-  const stream = await withGroqTextBudget(promptText, DETAIL_MAX_TOKENS, 'high', () => groq.chat.completions.create({
-    model: 'openai/gpt-oss-120b',
-    messages: [
-      { role: 'system', content: RESPONSE_GUARDRAILS },
-      { role: 'user', content: prompt },
-    ],
-    stream: true,
-    temperature: 0.25,
-    max_tokens: DETAIL_MAX_TOKENS,
-  }))
+  let stream
+  try {
+    stream = await withGroqTextBudget(promptText, DETAIL_MAX_TOKENS, 'high', () => groq.chat.completions.create({
+      model: 'openai/gpt-oss-120b',
+      messages: [
+        { role: 'system', content: RESPONSE_GUARDRAILS },
+        { role: 'user', content: prompt },
+      ],
+      stream: true,
+      temperature: 0.25,
+      max_tokens: DETAIL_MAX_TOKENS,
+    }))
+  } catch {
+    yield buildLocalDetailedFallback(suggestionTitle, suggestionType, suggestionDetail, transcript, meetingContext)
+    return
+  }
 
   for await (const chunk of stream) {
     const delta = chunk.choices[0]?.delta?.content
