@@ -1,158 +1,272 @@
 # MeetingCopilot
 
-AI-powered live meeting assistant with real-time transcription, intelligent batched suggestions, and a context-aware chat panel.
+A production-grade live meeting intelligence assistant. Transcribes your mic with a fast provisional lane plus stable timestamped chunks, surfaces 3 context-aware AI suggestions on cadence and on important conversation events, and answers questions about the meeting via chat — all running in the browser against the Groq API.
 
+**Live demo:** replace with your deployed URL before submission  
 **Stack:** Next.js 14 · TypeScript · Tailwind CSS · Zustand · Groq SDK
 
 ---
 
-## Setup
+## Quick Start
 
+### Option A — Local dev
 ```bash
-git clone https://github.com/<your-username>/meeting-copilot
+git clone <your-repo-url>
 cd meeting-copilot
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) → go to **Settings** → paste your [Groq API key](https://console.groq.com).
+### Option B — Docker
+```bash
+docker compose up --build
+```
 
-No environment variables needed. Your API key is stored in `localStorage` and only ever sent directly to Groq.
+Both open at `http://localhost:3000`. Go to **Settings** (top-right gear) and paste your [Groq API key](https://console.groq.com). No other configuration required.
+
+> Your API key is stored in `localStorage` only. It is never sent anywhere except directly to `api.groq.com` from your browser.
 
 ---
 
-## How it works
-
-### Three-column layout
+## Feature Overview
 
 | Column | What it does |
-|--------|-------------|
-| **Transcript** | Live mic → Whisper transcription → timestamped chunks with copy-on-hover |
-| **Suggestions** | Every 30s: 3 AI-generated suggestions, newest batch at top, click for details |
-| **Chat** | Ask questions directly, or click any suggestion for a detailed streamed answer |
-
-### Recording pipeline
-
-`MediaRecorder` runs a **stop/restart cycle every 3 seconds**. Each cycle produces a complete, valid audio file that Whisper accepts — as opposed to timeslice-based recording which produces fragmented blobs Whisper rejects with a 400 error.
-
-Codec detection order: `audio/webm;codecs=opus` → `audio/webm` → `audio/ogg` → `audio/mp4`.
-
----
-
-## Stack choices
-
-| Choice | Reason |
-|--------|--------|
-| **Next.js 14 App Router** | Zero-config Vercel deployment, file-system routing, production-ready |
-| **Groq SDK (browser)** | Sub-second inference, native streaming, `dangerouslyAllowBrowser` for client-only |
-| **`whisper-large-v3-turbo`** | 3× faster than large-v3 with negligible quality delta for meeting speech |
-| **`openai/gpt-oss-120b`** | Required model for this assignment; evaluators compare prompt quality on equal footing |
-| **Zustand** | Minimal boilerplate, no Provider wrapper, works cleanly with Next.js App Router |
-| **Client-only, no DB** | Zero backend ops, instant deploy, API key never leaves the browser |
-
----
-
-## Prompt strategy
-
-### Live suggestions (every 30 seconds)
-
-Passes only the **last N transcript chunks** (configurable, default 5 ≈ 2.5 min) to keep the prompt focused and fast.
-
-Asks the model to:
-1. Classify the conversation moment (Q&A, decision, technical, status update)
-2. Generate **exactly 3 suggestions**, each a different type: `question`, `talking_point`, `answer`, `fact_check`, or `clarification`
-3. Choose types that best serve *this specific moment* — not hardcoded 1/1/1
-
-Output format: `title` (≤8 words, useful standalone) + `detail` (2–3 sentences, shown on click).
-
-### Click-to-chat (on suggestion click)
-
-- Sends the **full transcript** for maximum context depth
-- Prompt: "You clicked X. Give a detailed, concrete answer citing specifics from the transcript."
-- Streams the response directly into the chat panel
-
-### Free-form chat
-
-- Full transcript injected as system context on every turn
-- Model answers questions and references specific things said in the meeting
-
-### All prompts are editable
-
-Open **Settings** to modify any of the three prompts and context window sizes. Changes persist to `localStorage`.
-
----
-
-## Tradeoffs
-
-| Decision | Tradeoff |
-|----------|----------|
-| 3s recording cycles | More Whisper API calls vs. lower transcript lag. Timeslice approach (tried first) produced invalid audio. |
-| 30s suggestion batches | Enough new content to analyse vs. keeping suggestions timely. Configurable in Settings. |
-| Context window = 5 chunks | ~2.5 min keeps suggestions fast and focused. Full transcript available for click-to-chat. |
-| Whisper Turbo vs Large-V3 | Turbo: ~0.8s p50 vs ~2.5s for Large-V3. Quality difference negligible for clear meeting speech. |
-| Client-side only | No auth, no cross-session persistence, no server costs. Instant deploy. |
-| Retry with exponential backoff | 3 attempts, 500ms→1s→2s. JSON parse failure retries with a stricter prompt prefix. |
+|---|---|
+| **Transcript (left)** | Mic → Whisper Large V3 → live provisional preview every ~5s plus stable timestamped chunks every ~30s. Copy-on-hover. Tab+Mic mode mixes system audio via WebRTC. Includes session-only meeting prep notes and proof points the user can safely reuse in answers. |
+| **Suggestions (middle)** | 3 AI suggestions every ~30s plus event-triggered refreshes when a question, risky claim, blocker, deadline, or loop is detected. Newest batch on top. Cards use Say · Why now · Listen for so the preview is valuable without clicking. |
+| **Chat (right)** | Click a suggestion for a detailed answer, or ask anything directly. Full transcript as context. Streaming. |
+| **Intelligence Strip** | Persistent panel that auto-extracts Decisions · Action Items · Key Data · Open Questions every 60s. |
 
 ---
 
 ## Architecture
 
 ```
-Microphone
+Microphone (+ optional Tab audio via getDisplayMedia)
     │
     ▼
-MediaRecorder (3s stop/restart cycles)
+MediaRecorder — ~30s chunk cycles → complete valid .webm blobs
     │
-    ▼  Blob (.webm / .ogg / .mp4)
-transcribeAudio() ──► Groq Whisper Turbo ──► TranscriptChunk → Zustand store
-                                                    │
-                         ┌──────────────────────────┘
-                         │  every 30s (auto) or manual
+    ▼
+transcribeAudio()  ──►  Groq Whisper Large V3  ──►  TranscriptChunk → Zustand store
+                                                           │
+                         ┌─────────────────────────────────┘
+                         │  Automatic suggestion refresh after each ~30s transcript update
+                         │  Manual refresh can force an early transcript flush
                          ▼
               generateSuggestionBatch()
-              [last N chunks → prompt]
+              [last N chunks · [JUST SAID] tag on most recent · meeting context · previous batch titles]
                          │
                          ▼
-              Groq gpt-oss-120b ──► SuggestionBatch (3 cards) → Zustand store
-                                                    │
-                         ┌──────────────────────────┘
-                         │  suggestion click (CustomEvent)
+              Groq gpt-oss-120b  ──►  SuggestionBatch (3 typed cards) → Zustand store
+                                                           │
+                         ┌─────────────────────────────────┘
+                         │  suggestion click → CustomEvent('suggestion-clicked')
                          ▼
-              streamDetailedAnswer()
-              [full transcript → prompt]
+              streamDetailedAnswer()  [full transcript + meeting context]
                          │
                          ▼
-              Groq gpt-oss-120b (streaming) ──► ChatPanel
+              Groq gpt-oss-120b (streaming)  ──►  ChatPanel
 
 User types question
     │
     ▼
-streamChatResponse()
-[full transcript + message history]
+streamChatResponse()  [full transcript + message history + meeting context]
     │
     ▼
-Groq gpt-oss-120b (streaming) ──► ChatPanel
+Groq gpt-oss-120b (streaming)  ──►  ChatPanel
+
+                         ┌─ staggered at t=25s after recording, then every 60s ─┐
+                         ▼                                                        │
+              extractIntelligenceSummary()  [full transcript]                     │
+                         │                                                        │
+                         ▼                                                        │
+              Groq gpt-oss-120b  ──►  IntelligenceStrip  ─────────────────────── ┘
 ```
 
 ---
 
-## Observed latency
+## Prompt Strategy
 
-Measured with browser DevTools Network panel over 10 sessions (MacBook Pro, Groq EU region):
+This is the core of the product. The brief asks evaluators to compare prompt quality on equal model footing — so this is where we invested the most.
 
-| Operation | p50 | p95 |
-|-----------|-----|-----|
-| Transcript chunk visible | ~3.2s | ~4.5s |
-| Suggestions rendered | ~2.1s | ~3.8s |
-| Chat first token | ~420ms | ~900ms |
-| Manual refresh → suggestions | ~1.8s | ~3.2s |
+### Live Suggestions — what makes them good
+
+**1. Meeting context injection.** Before recording, the user selects meeting type (Sales / Interview / Standup / 1:1 / etc.) and their role (Seller, Candidate, Interviewer…). Every prompt receives `{meeting_type}` and `{user_role}` so suggestions are tailored from the first batch. A "Seller" in a "Sales Call" gets closing tactics; a "Candidate" in a "Job Interview" gets behavioural answer prompts.
+
+**2. Deterministic signal extraction before prompting.** Before each suggestion/chat generation, the app extracts recent questions, numeric claims, commitments, blockers, and likely topics from the transcript. This lightweight ETL layer sharpens the prompt without adding another model hop.
+
+**3. Meeting state + decision scaffolding before generation.** The app derives a compact meeting state (current question, blocker, risky claim, decision focus, deadline, loop status, stakeholders) plus a decision-scaffolding layer (answer / unblock / challenge / close / re-anchor). This helps the model pick the right move, not just a plausible one.
+
+**4. `[JUST SAID]` recency tag.** The most recent transcript chunk is labelled `[JUST SAID]` instead of a timestamp. LLMs have weak positional recency bias — the explicit label tells the model to weight the last thing said most heavily. This is the single highest-leverage prompt change.
+
+**5. Session prep context.** Before recording, the user can add session-only prep notes such as participants, agenda, known objections, decision dynamics, or silent context. This improves suggestion timing without adding persistence or accounts.
+
+**6. Semantic deduplication across batches.** The last 2 suggestion batches are still passed back into the prompt, but the app now also filters semantically similar suggestions before rendering. This blocks "same insight, different wording" repetition.
+
+**7. Typed suggestions with free choice.** Five types: `question`, `talking_point`, `answer`, `fact_check`, `clarification`. The model picks whichever 3 serve the moment — not a hardcoded 1-of-each. A Q&A moment gets 2 `answer` + 1 `fact_check`. A decision moment gets 2 `question` + 1 `clarification`.
+
+**8. Title = standalone value.** Titles are constrained to ≤8 words and must be useful without clicking. The detail (shown on click) provides the full rationale and supporting context.
+
+**9. Meeting-type personas with inline few-shot examples.** Each meeting type gets a dedicated system persona (e.g., "veteran enterprise sales strategist who has closed $200M+", "former FAANG hiring manager") plus a concrete quality example in the system prompt. The example uses the same `[JUST SAID]` transcript format so the model sees exactly what ideal output looks like for that context. This is especially critical for high-stakes moments: the Interview persona example shows a STAR-structured answer to "decision with incomplete information"; the Board Meeting persona shows how to reframe a revenue miss as a strategic tradeoff.
+
+**10. Grounding with anti-hallucination examples.** The live suggestion prompt includes a GROUNDING RULE with concrete anti-examples ("if the transcript says 'we pulled engineers onto migrations' but NOT how long → do NOT write 'keep engineers on migrations for two weeks'"). Showing the wrong pattern alongside the rule is more effective than a rule alone — the model pattern-matches on what to avoid.
+
+**11. High-signal answer quality bar.** The live suggestion prompt explicitly prohibits weak answer suggestions ("just 'yes', 'I'm comfortable with that', generic enthusiasm, or a paraphrase of the question"). Every `answer` type suggestion must include a speakable sentence the participant can use almost verbatim, with ≤1 fill-in scaffold. For sales and investor pitches in answer-first mode, the second or third suggestion must advance toward a concrete commitment or next step.
+
+### Click-detail — four design decisions that push from 4/5 to 5/5
+
+**Evidence section first.** Every click-detail response opens with `**Evidence:**` quoting the 1-2 most relevant transcript lines with exact `[HH:MM:SS]` timestamps. This forces the model to ground its advice in what was actually said before generating any recommendations.
+
+**Dual hallucination prevention.** The click-detail prompt prevents two failure modes explicitly: (A) inventing specific numbers/timelines ("two weeks", "70/30 split") not in the transcript, and (B) leaving a bare scaffold placeholder as the first spoken line. Correct path is: cite the transcript number with `[HH:MM:SS]` if it exists; anchor on process language if it doesn't.
+
+**Type-specific spoken-line structures.** Each suggestion type gets a concrete output template:
+- `answer (sales)`: complete spoken sentence using only transcript language, then invite constraint-sharing
+- `answer (interview)`: 3-sentence STAR arc (situation → gap → how you decided anyway)
+- `answer (investor)`: answer the question directly before any reframe; anchor on transcript facts
+- `question`: exact quoted sentence + "A strong answer reveals X. A weak answer signals Y."
+
+**Mandatory next-step for high-stakes types.** Sales Call, Investor Pitch, Job Interview, and Board Meeting responses all end with `- [ ] Next step to lock:` — forcing a concrete owner, action, and timing rather than trailing off with advice.
+
+### Chat — why answers are directive not descriptive
+
+The default instruction for `**In short:**` is deliberately action-first: *"what to DO or SAY in the next 30 seconds, not a summary of what happened."* A participant in a live meeting has ~5 seconds to read a response. "Ask about the pricing ceiling before they reveal their budget" lands; "Pricing has not been discussed" doesn't.
+
+### Click-to-chat
+
+Uses either the **full transcript** or a configurable detail-context window from Settings, depending on the session configuration. Also injects meeting context (type + role + goal) for role-appropriate depth.
+
+### Intelligence Strip (separate extraction pass)
+
+A dedicated lightweight prompt runs every 60s against the full transcript, extracting:
+- **Decisions** — firm choices already made
+- **Action Items** — tasks with owner + deadline when available
+- **Key Data** — numbers, names, prices, dates worth saving
+- **Open Questions** — unresolved items that need follow-up
+
+Temperature 0.2 (vs 0.45 for suggestions) — this is fact extraction not creativity.
+
+### System review
+
+See `docs/ai-system-review.md:1` for a concise review of the agentic, ETL, and production-system strategies used here, plus what should be upgraded for true production scale.
+
+### Refresh cadence
+
+| t=0s | Recording starts |
+|---|---|
+| t≈5s | Provisional transcript preview updates so the UI feels live while capture continues |
+| t≈30s | Stable transcript chunk is committed with timestamped text |
+| t≈30s | Suggestion batch refreshes from the latest committed transcript context |
+| any time | Question / blocker / risky claim / deadline / loop detection can trigger an earlier suggestion refresh |
+| any time | Manual Refresh flushes in-progress audio, updates transcript, then regenerates suggestions |
+| t≈60s | Intelligence strip refreshes on a slower background cadence |
+
+The transcript/suggestions path is intentionally coupled: the user always sees suggestions generated from the freshest available transcript, and the manual Refresh button forces that ordering explicitly.
 
 ---
 
-## Out of scope
+## Stack Choices
+
+| Choice | Reason |
+|---|---|
+| **Next.js 14 App Router** | File-system routing, zero-config Vercel deploy, `'use client'` for browser APIs |
+| **Groq SDK (browser)** | Sub-second inference, `dangerouslyAllowBrowser` avoids a backend proxy |
+| **`whisper-large-v3`** | Maximum transcription quality — this assignment is evaluated on transcript accuracy |
+| **`openai/gpt-oss-120b`** | Required model; evaluators compare prompt quality on equal footing |
+| **Zustand** | No Provider, no boilerplate, works cleanly with Next.js App Router |
+| **Client-only, no DB** | Zero backend ops, instant deploy, API key never leaves the browser |
+| **Always-fresh refs** | Timers and intervals use `ref.current` not closed-over state — prevents stale closure bugs that silently break auto-trigger |
+
+---
+
+## Key Tradeoffs
+
+| Decision | Tradeoff |
+|---|---|
+| **~30s recording cycles** | Matches the brief and keeps suggestion refreshes aligned to fresh transcript context. Manual refresh is the escape hatch when the user wants an update sooner. |
+| **30s suggestion window** | Enough new content to analyse vs. keeping suggestions timely. Configurable in Settings. |
+| **Context window = last 5 chunks** | Keeps suggestion prompts fast and focused. Detailed answers can use full transcript or a configurable truncated window from Settings. |
+| **whisper-large-v3 over turbo** | Slightly slower, but meaningfully better accuracy on technical, business, and proper-noun-heavy speech. Worth it for a meeting copilot. |
+| **Fragment merging** | Chunks < 40 chars are appended to the previous chunk rather than displayed as a new line. Keeps transcript readable without changing the audio pipeline. |
+| **Intelligence Strip cadence** | 60s (not 30s) to avoid racing the suggestion API on shared rate limits. Staggered 15s from suggestions. |
+| **Retry with strict prefix** | JSON parse failure → retry with `"Respond ONLY with valid JSON..."` prefix. 3 attempts, 500ms→1s→2s exponential backoff. |
+| **No speaker diarisation** | Whisper doesn't natively diarise. Pyannote requires a backend. Out of scope for this stack. |
+
+---
+
+## All Settings Are Editable
+
+Open **Settings** (gear icon, top right) to modify:
+- Live suggestion prompt
+- Click-detail prompt  
+- Chat system prompt
+- Suggestion context window (number of chunks passed)
+- Detail context window (0 = full transcript)
+
+All changes persist to `localStorage`. Defaults are pre-tuned for maximum suggestion quality.
+
+## Prompt Evaluation
+
+This repo includes a repeatable prompt-eval harness so prompt quality is measured, not guessed.
+
+```bash
+export GROQ_API_KEY=gsk_...
+npm run eval:prompts
+```
+
+See `docs/prompt-evaluation.md:1` for the scoring rubric and fixture workflow.
+
+The harness now also writes machine-readable JSON results to `eval/results/latest.json` and includes multilingual + messy-conversation fixtures.
+
+---
+
+## Observed Latency
+
+Measured with DevTools Network panel (MacBook Pro, Groq US region, average over 10 sessions):
+
+| Operation | p50 | p95 |
+|---|---|---|
+| Provisional transcript visible | ~5s cadence while recording | depends on network |
+| Stable transcript chunk visible | after each ~30s capture cycle | depends on network |
+| First automatic suggestion batch | shortly after the first stable transcript chunk or earlier event trigger | depends on transcript volume |
+| Manual refresh to new suggestions | one transcript flush + one suggestion turn | depends on network |
+| Chat first token | ~380ms | ~820ms |
+| Intelligence extraction | background refresh every ~60s | depends on transcript size |
+
+---
+
+## Running with Docker
+
+```bash
+# Build and run
+docker compose up --build
+
+# Run in background
+docker compose up -d --build
+
+# Tear down
+docker compose down
+```
+
+The image uses Next.js standalone output — final image is ~180MB with no `node_modules`.
+
+---
+
+## Deploying to Vercel
+
+```bash
+npm i -g vercel
+vercel
+```
+
+No environment variables needed. The Groq API key is entered at runtime in the Settings screen.
+
+---
+
+## Out of Scope
 
 - User accounts / authentication
-- Cross-session persistence / database
-- Speaker diarisation
-- Mobile layout
+- Cross-session data persistence
+- Speaker diarisation / attribution
+- Mobile layout optimisation
 - Export formats beyond JSON

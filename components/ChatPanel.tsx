@@ -4,6 +4,7 @@ import { Send } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import { streamChatResponse, streamDetailedAnswer } from '@/lib/chat'
 import { generateId, formatTimestamp } from '@/lib/utils'
+import { ErrorBoundary } from './ErrorBoundary'
 import type { Suggestion } from '@/lib/store'
 
 function TypingIndicator() {
@@ -20,9 +21,9 @@ function TypingIndicator() {
   )
 }
 
-// **bold** renders in lime-dark for maximum eye-catch; *italic*, `code` also styled
-function renderInline(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`)/g)
+// **bold**, *italic*, `code`, and [HH:MM:SS] timestamp citations
+function renderInline(text: string, onTimestampClick?: (ts: string) => void): React.ReactNode {
+  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`|\[\d{1,2}:\d{2}(?::\d{2})?\])/g)
   if (parts.length === 1) return text
   return (
     <>
@@ -33,13 +34,28 @@ function renderInline(text: string): React.ReactNode {
           return <em key={i} className="italic text-text-primary">{part.slice(1, -1)}</em>
         if (part.startsWith('`') && part.endsWith('`'))
           return <code key={i} className="bg-accent-bg text-[#4d7c0f] font-mono text-[11px] px-1.5 py-0.5 rounded border border-accent-border">{part.slice(1, -1)}</code>
+        const tsMatch = part.match(/^\[(\d{1,2}:\d{2}(?::\d{2})?)\]$/)
+        if (tsMatch) {
+          return onTimestampClick ? (
+            <button
+              key={i}
+              onClick={() => onTimestampClick(tsMatch[1])}
+              className="inline-flex items-center gap-0.5 px-1 py-0.5 text-[10px] font-mono bg-amber-50 border border-amber-200 text-amber-700 rounded hover:bg-amber-100 transition-colors cursor-pointer mx-0.5"
+              title={`Jump to ${tsMatch[1]}`}
+            >
+              ⏱ {tsMatch[1]}
+            </button>
+          ) : (
+            <span key={i} className="inline text-[10px] font-mono text-text-faint mx-0.5">{part}</span>
+          )
+        }
         return part
       })}
     </>
   )
 }
 
-function TableBlock({ lines }: { lines: string[] }) {
+function TableBlock({ lines, onTimestampClick }: { lines: string[]; onTimestampClick?: (ts: string) => void }) {
   const rows = lines.map((l) => l.split('|').slice(1, -1).map((c) => c.trim()))
   const dataRows = rows.filter((r) => !r.every((c) => /^[-: ]+$/.test(c)))
   const [header, ...body] = dataRows
@@ -51,7 +67,7 @@ function TableBlock({ lines }: { lines: string[] }) {
           <tr className="bg-accent-bg">
             {header.map((cell, i) => (
               <th key={i} className="px-3 py-2 text-left font-semibold text-[#4d7c0f] border-b border-accent-border">
-                {renderInline(cell)}
+                {renderInline(cell, onTimestampClick)}
               </th>
             ))}
           </tr>
@@ -61,7 +77,7 @@ function TableBlock({ lines }: { lines: string[] }) {
             <tr key={ri} className={ri % 2 === 0 ? 'bg-surface-primary' : 'bg-surface-secondary'}>
               {row.map((cell, ci) => (
                 <td key={ci} className="px-3 py-2 text-text-secondary border-b border-border last:border-b-0">
-                  {renderInline(cell)}
+                  {renderInline(cell, onTimestampClick)}
                 </td>
               ))}
             </tr>
@@ -72,7 +88,7 @@ function TableBlock({ lines }: { lines: string[] }) {
   )
 }
 
-function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
+function MarkdownMessage({ text, isUser, onTimestampClick }: { text: string; isUser: boolean; onTimestampClick?: (ts: string) => void }) {
   if (isUser) {
     return <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
   }
@@ -98,7 +114,7 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
         tableLines.push(lines[i])
         i++
       }
-      nodes.push(<TableBlock key={`tbl-${i}`} lines={tableLines} />)
+      nodes.push(<TableBlock key={`tbl-${i}`} lines={tableLines} onTimestampClick={onTimestampClick} />)
       continue
     }
 
@@ -107,7 +123,7 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
       nodes.push(
         <div key={i} className="flex items-start gap-2.5 bg-accent-bg border-l-[3px] border-accent rounded-r-xl px-3 py-2 my-1">
           <span className="text-accent text-[8px] mt-1 flex-shrink-0">◆</span>
-          <span className="text-sm font-semibold text-text-primary leading-snug">{renderInline(trimmed.slice(2))}</span>
+          <span className="text-sm font-semibold text-text-primary leading-snug">{renderInline(trimmed.slice(2), onTimestampClick)}</span>
         </div>
       )
       i++
@@ -119,7 +135,7 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
       nodes.push(
         <div key={i} className="bg-accent-bg rounded-xl px-3.5 py-2.5 border border-accent-border my-1 shadow-sm">
           <p className="text-sm font-semibold text-text-primary leading-snug">
-            {renderInline(trimmed)}
+            {renderInline(trimmed, onTimestampClick)}
           </p>
         </div>
       )
@@ -131,7 +147,7 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
     if (trimmed.startsWith('## ')) {
       nodes.push(
         <p key={i} className="text-sm font-bold text-text-primary mt-2.5 mb-0.5 border-l-2 border-accent pl-2">
-          {renderInline(trimmed.slice(3))}
+          {renderInline(trimmed.slice(3), onTimestampClick)}
         </p>
       )
       i++
@@ -142,7 +158,7 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
     if (trimmed.startsWith('### ')) {
       nodes.push(
         <p key={i} className="text-[11px] font-bold text-text-muted uppercase tracking-widest mt-2 mb-0.5">
-          {renderInline(trimmed.slice(4))}
+          {renderInline(trimmed.slice(4), onTimestampClick)}
         </p>
       )
       i++
@@ -158,7 +174,7 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
         items.push(
           <li key={i} className="flex items-start gap-2.5 text-sm leading-relaxed">
             <span className="w-3.5 h-3.5 rounded border-2 border-accent flex-shrink-0 mt-[3px]" />
-            <span className="text-text-secondary">{renderInline(t.replace(/^[-*]\s\[\s?\]\s?/, ''))}</span>
+            <span className="text-text-secondary">{renderInline(t.replace(/^[-*]\s\[\s?\]\s?/, ''), onTimestampClick)}</span>
           </li>
         )
         i++
@@ -180,7 +196,7 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
         items.push(
           <li key={i} className="flex items-start gap-2 text-sm leading-relaxed">
             <span className="text-accent flex-shrink-0 mt-[6px] text-[6px]">◆</span>
-            <span className="text-text-secondary">{renderInline(t.slice(2))}</span>
+            <span className="text-text-secondary">{renderInline(t.slice(2), onTimestampClick)}</span>
           </li>
         )
         i++
@@ -199,7 +215,7 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
         items.push(
           <li key={i} className="flex items-start gap-2 text-sm leading-relaxed">
             <span className="text-accent font-bold flex-shrink-0 min-w-[18px] text-right">{m[1]}.</span>
-            <span className="text-text-secondary">{renderInline(m[2])}</span>
+            <span className="text-text-secondary">{renderInline(m[2], onTimestampClick)}</span>
           </li>
         )
         i++
@@ -211,7 +227,7 @@ function MarkdownMessage({ text, isUser }: { text: string; isUser: boolean }) {
     // Regular paragraph
     nodes.push(
       <p key={i} className="text-sm leading-relaxed text-text-secondary">
-        {renderInline(trimmed)}
+        {renderInline(trimmed, onTimestampClick)}
       </p>
     )
     i++
@@ -225,12 +241,23 @@ export default function ChatPanel() {
     messages,
     transcript,
     settings,
+    meetingContext,
     addMessage,
     updateLastMessage,
     apiKey,
     isStreamingChat,
     setIsStreamingChat,
+    setFocusedChunkId,
   } = useMeetingStore()
+
+  const transcriptRef = useRef(transcript)
+  useEffect(() => { transcriptRef.current = transcript }, [transcript])
+
+  const handleTimestampClick = useCallback((ts: string) => {
+    const chunk = transcriptRef.current.find((c) => c.timestamp === ts)
+      ?? transcriptRef.current.find((c) => c.timestamp.startsWith(ts.slice(0, 5)))
+    if (chunk) setFocusedChunkId(chunk.id)
+  }, [setFocusedChunkId])
 
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -244,6 +271,10 @@ export default function ChatPanel() {
   const sendMessage = useCallback(
     async (text: string, isDetailedAnswer = false, suggestion?: Suggestion) => {
       if (!text.trim() || isStreamingChat) return
+      if (!apiKey) {
+        setError('Add your Groq API key in Settings before using chat.')
+        return
+      }
 
       setError(null)
 
@@ -270,10 +301,12 @@ export default function ChatPanel() {
         if (isDetailedAnswer && suggestion) {
           for await (const delta of streamDetailedAnswer(
             suggestion.title,
+            suggestion.type,
             suggestion.detail,
             transcript,
             apiKey,
-            settings
+            settings,
+            meetingContext
           )) {
             accumulated += delta
             updateLastMessage(accumulated)
@@ -281,7 +314,7 @@ export default function ChatPanel() {
         } else {
           // snapshot messages before adding assistant placeholder
           const allMessages = [...messages, userMsg]
-          for await (const delta of streamChatResponse(allMessages, transcript, apiKey, settings)) {
+          for await (const delta of streamChatResponse(allMessages, transcript, apiKey, settings, meetingContext)) {
             accumulated += delta
             updateLastMessage(accumulated)
           }
@@ -352,7 +385,13 @@ export default function ChatPanel() {
                 }`}
               >
                 {msg.content ? (
-                  <MarkdownMessage text={msg.content} isUser={msg.role === 'user'} />
+                  <ErrorBoundary fallback={<pre className="text-xs whitespace-pre-wrap text-text-secondary">{msg.content}</pre>}>
+                    <MarkdownMessage
+                      text={msg.content}
+                      isUser={msg.role === 'user'}
+                      onTimestampClick={msg.role === 'assistant' ? handleTimestampClick : undefined}
+                    />
+                  </ErrorBoundary>
                 ) : (
                   <TypingIndicator />
                 )}
@@ -386,14 +425,16 @@ export default function ChatPanel() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about the meeting… (Enter to send)"
+            placeholder={apiKey ? 'Ask about the meeting… (Enter to send)' : 'Add your Groq API key in Settings to use chat'}
             rows={1}
             className="flex-1 bg-transparent text-text-primary text-sm placeholder-text-faint resize-none focus:outline-none max-h-32 overflow-y-auto"
             style={{ lineHeight: '1.5' }}
           />
           <button
             onClick={handleSend}
-            disabled={!input.trim() || isStreamingChat}
+            disabled={!apiKey || !input.trim() || isStreamingChat}
+            type="button"
+            aria-label="Send chat message"
             className="p-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-text-on-accent rounded-lg transition-colors flex-shrink-0"
           >
             <Send size={14} />

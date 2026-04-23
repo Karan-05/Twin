@@ -1,11 +1,15 @@
 import { create } from 'zustand'
 import { loadSettings } from './settings'
 import type { AppSettings } from './settings'
+import type { MeetingState } from './meetingState'
+
+export type Sentiment = 'positive' | 'neutral' | 'tense' | 'confused'
 
 export interface TranscriptChunk {
   id: string
   text: string
   timestamp: string
+  sentiment?: Sentiment
 }
 
 export type SuggestionType = 'question' | 'talking_point' | 'answer' | 'fact_check' | 'clarification'
@@ -15,6 +19,10 @@ export interface Suggestion {
   type: SuggestionType
   title: string
   detail: string
+  say?: string
+  whyNow?: string
+  listenFor?: string
+  score?: number
 }
 
 export interface SuggestionBatch {
@@ -31,6 +39,22 @@ export interface Message {
   timestamp: string
 }
 
+export interface MeetingContext {
+  meetingType: string
+  userRole: string
+  goal: string
+  prepNotes?: string
+  proofPoints?: string
+  language?: string
+}
+
+export interface IntelligenceSummary {
+  decisions: string[]
+  actionItems: string[]
+  keyData: string[]
+  openQuestions: string[]
+}
+
 interface MeetingStore {
   apiKey: string
   isRecording: boolean
@@ -43,6 +67,11 @@ interface MeetingStore {
   isGeneratingSuggestions: boolean
   isStreamingChat: boolean
   settings: AppSettings
+  meetingContext: MeetingContext
+  liveTranscriptPreview: string
+  meetingState: MeetingState
+  intelligenceSummary: IntelligenceSummary | null
+  isExtractingIntelligence: boolean
 
   setApiKey: (key: string) => void
   setIsRecording: (val: boolean) => void
@@ -52,8 +81,18 @@ interface MeetingStore {
   setIsStreamingChat: (v: boolean) => void
   setSessionTitle: (title: string) => void
   setSettings: (s: AppSettings) => void
+  setMeetingContext: (ctx: MeetingContext) => void
+  setLiveTranscriptPreview: (text: string) => void
+  setMeetingState: (state: MeetingState) => void
+  setIntelligenceSummary: (s: IntelligenceSummary | null) => void
+  setIsExtractingIntelligence: (v: boolean) => void
+  priorMeetingContext: string | null
+  setPriorMeetingContext: (ctx: string | null) => void
+  focusedChunkId: string | null
+  setFocusedChunkId: (id: string | null) => void
   addTranscriptChunk: (chunk: TranscriptChunk) => void
   appendToLastTranscriptChunk: (text: string) => void
+  updateChunkSentiment: (id: string, sentiment: Sentiment) => void
   addSuggestionBatch: (batch: SuggestionBatch) => void
   addMessage: (message: Message) => void
   updateLastMessage: (content: string) => void
@@ -72,6 +111,24 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
   isGeneratingSuggestions: false,
   isStreamingChat: false,
   settings: loadSettings(),
+  meetingContext: { meetingType: '', userRole: '', goal: '', prepNotes: '', proofPoints: '' },
+  liveTranscriptPreview: '',
+  meetingState: {
+    mode: 'probe',
+    currentQuestion: null,
+    blocker: null,
+    riskyClaim: null,
+    decisionFocus: null,
+    deadlineSignal: null,
+    loopStatus: null,
+    stakeholderSignals: [],
+    triggerReason: null,
+    updatedAt: null,
+  },
+  intelligenceSummary: null,
+  isExtractingIntelligence: false,
+  priorMeetingContext: null,
+  focusedChunkId: null,
 
   setApiKey: (key) => set({ apiKey: key }),
   setIsRecording: (val) => set({ isRecording: val }),
@@ -81,6 +138,13 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
   setIsStreamingChat: (v) => set({ isStreamingChat: v }),
   setSessionTitle: (title) => set({ sessionTitle: title }),
   setSettings: (s) => set({ settings: s }),
+  setMeetingContext: (ctx) => set({ meetingContext: ctx }),
+  setLiveTranscriptPreview: (text) => set({ liveTranscriptPreview: text }),
+  setMeetingState: (meetingState) => set({ meetingState }),
+  setIntelligenceSummary: (s) => set({ intelligenceSummary: s }),
+  setIsExtractingIntelligence: (v) => set({ isExtractingIntelligence: v }),
+  setPriorMeetingContext: (ctx) => set({ priorMeetingContext: ctx }),
+  setFocusedChunkId: (id) => set({ focusedChunkId: id }),
   addTranscriptChunk: (chunk) =>
     set((s) => ({ transcript: [...s.transcript, chunk] })),
   appendToLastTranscriptChunk: (text) =>
@@ -91,6 +155,10 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
       chunks[chunks.length - 1] = { ...last, text: `${last.text} ${text}` }
       return { transcript: chunks }
     }),
+  updateChunkSentiment: (id, sentiment) =>
+    set((s) => ({
+      transcript: s.transcript.map((c) => (c.id === id ? { ...c, sentiment } : c)),
+    })),
   addSuggestionBatch: (batch) =>
     set((s) => ({ suggestionBatches: [batch, ...s.suggestionBatches] })),
   addMessage: (message) =>
@@ -111,5 +179,20 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
       sessionStartTime: null,
       nextSuggestionIn: 30,
       sessionTitle: 'Untitled Meeting',
+      liveTranscriptPreview: '',
+      intelligenceSummary: null,
+      meetingContext: { meetingType: '', userRole: '', goal: '', prepNotes: '', proofPoints: '' },
+      meetingState: {
+        mode: 'probe',
+        currentQuestion: null,
+        blocker: null,
+        riskyClaim: null,
+        decisionFocus: null,
+        deadlineSignal: null,
+        loopStatus: null,
+        stakeholderSignals: [],
+        triggerReason: null,
+        updatedAt: null,
+      },
     }),
 }))

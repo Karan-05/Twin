@@ -1,0 +1,13 @@
+
+> meeting-copilot@0.1.0 eval:prompts
+> node scripts/eval-prompts.ts
+
+(node:29397) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:29397) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/karanallagh/Desktop/kg_cod/meeting-copilot/scripts/eval-prompts.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/karanallagh/Desktop/kg_cod/meeting-copilot/package.json.
+Evaluating sales-objection...
+Evaluating interview-signal...
+Evaluating standup-blocker...
+429 {"error":{"message":"Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01kmdsexffexfam0v9a6p8v664` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 198958, Requested 1650. Please try again in 4m22.656s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing","type":"tokens","code":"rate_limit_exceeded"}}

@@ -1,0 +1,196 @@
+{
+  "scenarios": [
+    {
+      "id": "sales-objection",
+      "name": "Sales call with hidden objection",
+      "meetingContext": {
+        "meetingType": "Sales Call",
+        "userRole": "Seller",
+        "goal": "Uncover the real objection and leave with a concrete next step"
+      },
+      "transcript": [
+        { "timestamp": "00:00:08", "text": "Thanks for making time. I want to understand your current workflow and where things are getting stuck." },
+        { "timestamp": "00:00:35", "text": "Honestly we've seen a few tools and they all look pretty similar from where I sit." },
+        { "timestamp": "00:00:58", "text": "The team definitely wants something this quarter, but I still need our operations lead and finance to weigh in before we move." },
+        { "timestamp": "00:01:24", "text": "If implementation drags on for months it's dead on arrival for us." },
+        { "timestamp": "00:01:49", "text": "Can you explain why your onboarding would actually be faster than the others?" }
+      ],
+      "mustCoverAny": ["onboarding", "operations lead", "finance", "implementation", "similar"],
+      "antiPatterns": ["generic follow-up", "summarize the meeting", "thank them"],
+      "detailScenario": "The user clicks the most useful suggestion and needs a response they can use immediately."
+    },
+    {
+      "id": "interview-signal",
+      "name": "Interview loop signal extraction",
+      "meetingContext": {
+        "meetingType": "Job Interview",
+        "userRole": "Candidate",
+        "goal": "Show ownership and probe whether the team actually moves fast"
+      },
+      "transcript": [
+        { "timestamp": "00:00:10", "text": "We're a pretty lean team and ownership matters a lot here." },
+        { "timestamp": "00:00:41", "text": "People who do well can jump on messy problems without waiting for permission." },
+        { "timestamp": "00:01:05", "text": "At the same time, we move very quickly and priorities can shift week to week." },
+        { "timestamp": "00:01:27", "text": "Can you tell me about a time you had to make a decision with incomplete information?" },
+        { "timestamp": "00:01:53", "text": "Also, are you comfortable working across product, engineering, and support when things get busy?" }
+      ],
+      "mustCoverAny": ["ownership", "messy problems", "priorities shift", "incomplete information", "cross-functional"],
+      "antiPatterns": ["tell them you are excited", "generic culture fit answer", "repeat resume"],
+      "detailScenario": "The user clicks the best suggestion because they need a high-signal answer they can say now."
+    },
+    {
+      "id": "standup-blocker",
+      "name": "Standup with dependency risk",
+      "meetingContext": {
+        "meetingType": "Standup",
+        "userRole": "Engineer",
+        "goal": "Surface blockers clearly and prevent an avoidable slip"
+      },
+      "transcript": [
+        { "timestamp": "00:00:07", "text": "Yesterday I finished the API integration for billing and started wiring the retry logic." },
+        { "timestamp": "00:00:29", "text": "The blocker is that we still don't know which error states legal wants exposed to enterprise customers." },
+        { "timestamp": "00:00:49", "text": "If we don't settle that by tomorrow, QA can't finish the regression pass before Friday." },
+        { "timestamp": "00:01:12", "text": "I can keep moving on the happy path, but the edge cases are still ambiguous." },
+        { "timestamp": "00:01:33", "text": "Does anyone know who can actually make the call on that?" }
+      ],
+      "mustCoverAny": ["legal", "QA", "Friday", "edge cases", "owner"],
+      "antiPatterns": ["be patient", "work harder", "generic next steps"],
+      "detailScenario": "The user clicks a suggestion because they need wording to escalate the blocker without sounding vague."
+    },
+    {
+      "id": "discovery-polite-interest",
+      "name": "Customer discovery with fake-positive interest",
+      "meetingContext": {
+        "meetingType": "Customer Discovery",
+        "userRole": "Founder",
+        "goal": "Separate politeness from real pain"
+      },
+      "transcript": [
+        { "timestamp": "00:00:06", "text": "Yeah, something like that would definitely be nice to have at some point." },
+        { "timestamp": "00:00:28", "text": "Right now the team mostly pieces things together in spreadsheets and Slack, which is annoying but manageable." },
+        { "timestamp": "00:00:53", "text": "I wouldn't say it's urgent, but if it saved people a few hours each week we'd probably look at it." },
+        { "timestamp": "00:01:19", "text": "We've tried to standardize the process before and it kind of fizzled because nobody owned it." },
+        { "timestamp": "00:01:43", "text": "Budget isn't the first question for us; priority is the bigger issue." }
+      ],
+      "mustCoverAny": ["nice to have", "spreadsheets", "few hours", "owner", "priority"],
+      "antiPatterns": ["start pitching features", "assume budget approval", "treat interest as demand"],
+      "detailScenario": "The user clicks a suggestion because they want a sharp follow-up that tests whether the problem is truly painful."
+    },
+    {
+      "id": "investor-pitch-tam",
+      "name": "Investor pitch with hand-wavy market sizing",
+      "meetingContext": {
+        "meetingType": "Investor Pitch",
+        "userRole": "Founder",
+        "goal": "Defend credibility and steer the conversation toward real traction"
+      },
+      "transcript": [
+        { "timestamp": "00:00:11", "text": "We're going after a fifty billion dollar market, and honestly every company with a support team will need this eventually." },
+        { "timestamp": "00:00:36", "text": "Today we're at ninety thousand in ARR, growing about twelve percent month over month for the last four months." },
+        { "timestamp": "00:01:02", "text": "Our biggest challenge has been moving upmarket because security review slows everything down." },
+        { "timestamp": "00:01:24", "text": "What have you actually learned about the wedge where you win fastest?" },
+        { "timestamp": "00:01:48", "text": "Also, why won't a bigger incumbent just bundle this once they notice the traction?" }
+      ],
+      "mustCoverAny": ["fifty billion", "ARR", "twelve percent", "security review", "wedge", "incumbent"],
+      "antiPatterns": ["repeat the TAM claim confidently", "answer defensibility vaguely", "ignore the wedge question"],
+      "detailScenario": "The user clicks because they need a crisp investor-grade answer that protects credibility fast."
+    },
+    {
+      "id": "one-on-one-feedback",
+      "name": "1:1 with vague but risky feedback",
+      "meetingContext": {
+        "meetingType": "1:1",
+        "userRole": "Direct Report",
+        "goal": "Turn vague feedback into something specific and actionable"
+      },
+      "transcript": [
+        { "timestamp": "00:00:09", "text": "Overall you're doing well, but I think a few stakeholders still feel surprised by changes coming out of your team." },
+        { "timestamp": "00:00:33", "text": "It's not really a performance issue exactly, more about perception and alignment." },
+        { "timestamp": "00:01:00", "text": "Last sprint reprioritization created some noise, especially with design and customer success." },
+        { "timestamp": "00:01:23", "text": "I don't want you to over-rotate, but I do want this to get cleaner over the next month." },
+        { "timestamp": "00:01:47", "text": "Does that make sense?" }
+      ],
+      "mustCoverAny": ["surprised", "perception", "alignment", "design", "customer success", "next month"],
+      "antiPatterns": ["just apologize", "accept vague feedback without probing", "be defensive"],
+      "detailScenario": "The user clicks because they need a tactful but direct response that gets specificity without sounding defensive."
+    },
+    {
+      "id": "board-meeting-risk",
+      "name": "Board meeting with strategic concern buried in updates",
+      "meetingContext": {
+        "meetingType": "Board Meeting",
+        "userRole": "CEO",
+        "goal": "Surface the real board concern and keep the discussion strategic"
+      },
+      "transcript": [
+        { "timestamp": "00:00:12", "text": "Revenue landed eight percent below plan, but enterprise renewals were stronger than expected." },
+        { "timestamp": "00:00:35", "text": "We pulled two senior engineers onto customer migrations, which helped churn risk but slowed the platform roadmap." },
+        { "timestamp": "00:01:01", "text": "I know we said the AI upsell would be a second-half growth lever, but adoption is still early and the packaging isn't settled." },
+        { "timestamp": "00:01:29", "text": "How should we think about the tradeoff between near-term retention work and the longer-term product story?" },
+        { "timestamp": "00:01:56", "text": "I'm less worried about this quarter than whether we're building a company with durable leverage." }
+      ],
+      "mustCoverAny": ["eight percent below plan", "migrations", "roadmap", "AI upsell", "durable leverage"],
+      "antiPatterns": ["stay in update mode", "ignore the strategic tradeoff", "answer only at the metric level"],
+      "detailScenario": "The user clicks because they need a CEO-level response that reframes the board conversation strategically."
+    },
+    {
+      "id": "brainstorm-drift",
+      "name": "Brainstorm drifting without decision criteria",
+      "meetingContext": {
+        "meetingType": "Brainstorm",
+        "userRole": "Facilitator",
+        "goal": "Stop idea-sprawl and get the group to converge on a useful decision frame",
+        "prepNotes": "Need to leave with 1 idea to test this week, not a long backlog. Two senior stakeholders disagree on speed vs polish."
+      },
+      "transcript": [
+        { "timestamp": "00:00:09", "text": "What if we launched a concierge tier, or maybe a template gallery, or maybe both if we can move quickly?" },
+        { "timestamp": "00:00:31", "text": "I still think the biggest issue is activation, but support volume is also climbing and sales keeps asking for differentiation." },
+        { "timestamp": "00:00:57", "text": "We could probably ship something lightweight in two weeks, but if it's rough around the edges I'm not sure leadership will love it." },
+        { "timestamp": "00:01:25", "text": "Can we just brainstorm a few more options before narrowing?" },
+        { "timestamp": "00:01:48", "text": "I'm not hearing a clear way we're deciding between these, which is why this keeps looping." }
+      ],
+      "mustCoverAny": ["activation", "support volume", "differentiation", "two weeks", "decision", "looping"],
+      "antiPatterns": ["add more ideas", "pretend consensus exists", "ignore the speed-vs-polish tension"],
+      "detailScenario": "The user clicks because they need facilitator wording that stops the loop without killing momentum."
+    },
+    {
+      "id": "multilingual-interruption",
+      "name": "Mixed-language meeting with interruption and deadline pressure",
+      "meetingContext": {
+        "meetingType": "Sales Call",
+        "userRole": "Seller",
+        "goal": "Keep control of the call, answer the concern, and lock the next step",
+        "prepNotes": "Buyer team is partly bilingual. Main risk is timeline and internal approval friction."
+      },
+      "transcript": [
+        { "timestamp": "00:00:08", "text": "We like the product, but honestly the implementation timeline is still the biggest concern for us." },
+        { "timestamp": "00:00:27", "text": "Sí, porque el equipo de operaciones no quiere otra migración larga este trimestre." },
+        { "timestamp": "00:00:46", "text": "Right, and finance will ask why we should prioritize this now instead of waiting until Q4." },
+        { "timestamp": "00:01:05", "text": "Sorry to interrupt — can you tell me directly what the first two weeks would actually look like if we moved forward?" },
+        { "timestamp": "00:01:29", "text": "Because if that answer is fuzzy, this probably stalls internally." }
+      ],
+      "mustCoverAny": ["implementation timeline", "operations", "finance", "Q4", "first two weeks", "stalls internally"],
+      "antiPatterns": ["ignore the Spanish line", "answer vaguely", "ask another broad question instead of answering"],
+      "detailScenario": "The user clicks because they need a clean, direct answer while staying credible across a bilingual stakeholder group."
+    },
+    {
+      "id": "messy-cross-talk",
+      "name": "Messy cross-talk with conflicting signals",
+      "meetingContext": {
+        "meetingType": "Team Review",
+        "userRole": "Manager",
+        "goal": "Cut through cross-talk and identify the root issue with an owner"
+      },
+      "transcript": [
+        { "timestamp": "00:00:05", "text": "I mean, maybe the launch was fine, but support volume definitely jumped and design says the new flow is confusing." },
+        { "timestamp": "00:00:24", "text": "Well hold on, the real issue wasn't design, it was that we changed onboarding copy and didn't tell success until after the rollout." },
+        { "timestamp": "00:00:43", "text": "Either way, nobody had a clean owner on the experiment once PM went on leave." },
+        { "timestamp": "00:01:01", "text": "We keep saying 'communication' but that's too vague to fix." },
+        { "timestamp": "00:01:20", "text": "Can someone just say what actually broke and who owns the repair?" }
+      ],
+      "mustCoverAny": ["support volume", "design", "onboarding copy", "success", "owner", "too vague"],
+      "antiPatterns": ["summarize the chaos", "blame a team vaguely", "ignore the ownerless experiment"],
+      "detailScenario": "The user clicks because they need a direct line that cuts through cross-talk and names the real fix path."
+    }
+  ]
+}

@@ -52,6 +52,7 @@ export default function SettingsPage() {
   }
 
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    setSaved(false)
     setLocalSettings((prev) => ({ ...prev, [key]: value }))
   }
 
@@ -95,6 +96,7 @@ export default function SettingsPage() {
                 type="button"
                 onClick={() => setShowKey((v) => !v)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-text-faint hover:text-text-muted transition-colors"
+                aria-label={showKey ? 'Hide API key' : 'Show API key'}
               >
                 {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
@@ -154,6 +156,7 @@ export default function SettingsPage() {
                 className="w-full bg-surface-tertiary border border-border-strong focus:border-accent text-text-primary rounded-xl px-4 py-3 text-xs font-mono outline-none transition-colors resize-y"
               />
               <button
+                type="button"
                 onClick={() => updateSetting(key, DEFAULT_SETTINGS[key])}
                 className="text-xs text-text-faint hover:text-accent transition-colors mt-1"
               >

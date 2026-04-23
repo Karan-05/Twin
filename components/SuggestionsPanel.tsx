@@ -6,6 +6,9 @@ import { generateSuggestionBatch } from '@/lib/suggestions'
 import type { SuggestionBatch, Suggestion } from '@/lib/store'
 
 const SUGGESTION_INTERVAL_S = 30
+const FIRST_BATCH_DELAY_S = 30
+const PRE_FIRE_S = 0
+const EVENT_TRIGGER_COOLDOWN_MS = 12000
 
 const TYPE_STYLES: Record<
   string,
@@ -65,9 +68,20 @@ function SuggestionCard({
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onClickDetail(suggestion)
+    }
+  }
+
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-label={`Open detailed answer for suggestion: ${suggestion.title}`}
       onClick={() => onClickDetail(suggestion)}
+      onKeyDown={handleKeyDown}
       className={`group cursor-pointer rounded-xl border border-border border-l-4 ${style.border} ${style.bg} px-3 py-2.5 hover:shadow-sm transition-all animate-slide-in`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -76,17 +90,35 @@ function SuggestionCard({
             {style.label}
           </span>
           <p className="text-text-secondary text-sm font-medium leading-snug">{suggestion.title}</p>
+          {suggestion.say ? (
+            <div className="mt-1.5 space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-faint">Say</p>
+              <p className="text-text-secondary text-xs leading-relaxed">“{suggestion.say}”</p>
+              {suggestion.whyNow && (
+                <p className="text-[11px] text-text-muted leading-relaxed"><span className="font-semibold text-text-secondary">Why now:</span> {suggestion.whyNow}</p>
+              )}
+              {suggestion.listenFor && (
+                <p className="text-[11px] text-text-muted leading-relaxed"><span className="font-semibold text-text-secondary">Listen for:</span> {suggestion.listenFor}</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-text-muted text-xs leading-relaxed mt-1.5">
+              {suggestion.detail}
+            </p>
+          )}
         </div>
         <button
+          type="button"
           onClick={handleCopy}
-          className="opacity-0 group-hover:opacity-100 p-1 text-text-faint hover:text-text-muted transition-all rounded flex-shrink-0 mt-0.5"
-          title="Copy"
+          className="opacity-70 md:opacity-0 md:group-hover:opacity-100 p-1 text-text-faint hover:text-text-muted transition-all rounded flex-shrink-0 mt-0.5"
+          title="Copy suggestion"
+          aria-label={`Copy suggestion: ${suggestion.title}`}
         >
           {copied ? <Check size={11} className="text-accent" /> : <Copy size={11} />}
         </button>
       </div>
-      <p className="text-text-faint text-xs mt-1.5 group-hover:text-text-muted transition-colors">
-        Click for details →
+      <p className="text-text-faint text-[11px] mt-2 group-hover:text-text-muted transition-colors">
+        Click for expanded answer →
       </p>
     </div>
   )
@@ -114,8 +146,11 @@ function BatchBlock({
             </span>
           )}
           <button
+            type="button"
             onClick={() => setCollapsed((v) => !v)}
             className="p-0.5 text-text-faint hover:text-text-muted transition-colors"
+            aria-label={collapsed ? `Expand suggestion batch from ${batch.timestamp}` : `Collapse suggestion batch from ${batch.timestamp}`}
+            aria-expanded={!collapsed}
           >
             {collapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
           </button>
@@ -142,10 +177,14 @@ export default function SuggestionsPanel() {
   const {
     isRecording,
     transcript,
+    liveTranscriptPreview,
     suggestionBatches,
     isGeneratingSuggestions,
     settings,
     apiKey,
+    meetingContext,
+    meetingState,
+    priorMeetingContext,
     addSuggestionBatch,
     setIsGeneratingSuggestions,
     nextSuggestionIn,
@@ -155,23 +194,48 @@ export default function SuggestionsPanel() {
   const [error, setError] = useState<string | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const preFireRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isGeneratingRef = useRef(isGeneratingSuggestions)
   // Always-fresh refs so timers never capture stale closure values
   const transcriptRef = useRef(transcript)
   const apiKeyRef = useRef(apiKey)
   const settingsRef = useRef(settings)
+  const meetingContextRef = useRef(meetingContext)
+  const liveTranscriptPreviewRef = useRef(liveTranscriptPreview)
+  const meetingStateRef = useRef(meetingState)
+  const suggestionBatchesRef = useRef(suggestionBatches)
+  const priorMeetingContextRef = useRef(priorMeetingContext)
+  const lastTriggeredAtRef = useRef(0)
 
   useEffect(() => { isGeneratingRef.current = isGeneratingSuggestions }, [isGeneratingSuggestions])
   useEffect(() => { transcriptRef.current = transcript }, [transcript])
   useEffect(() => { apiKeyRef.current = apiKey }, [apiKey])
   useEffect(() => { settingsRef.current = settings }, [settings])
+  useEffect(() => { meetingContextRef.current = meetingContext }, [meetingContext])
+  useEffect(() => { liveTranscriptPreviewRef.current = liveTranscriptPreview }, [liveTranscriptPreview])
+  useEffect(() => { meetingStateRef.current = meetingState }, [meetingState])
+  useEffect(() => { suggestionBatchesRef.current = suggestionBatches }, [suggestionBatches])
+  useEffect(() => { priorMeetingContextRef.current = priorMeetingContext }, [priorMeetingContext])
 
-  const triggerSuggestions = useCallback(async () => {
-    if (!apiKeyRef.current || transcriptRef.current.length === 0 || isGeneratingRef.current) return
+  const triggerSuggestions = useCallback(async (reason = 'timer') => {
+    const hasContext = transcriptRef.current.length > 0 || liveTranscriptPreviewRef.current.trim().length > 0
+    if (!apiKeyRef.current || !hasContext || isGeneratingRef.current) return
     setIsGeneratingSuggestions(true)
     setError(null)
     try {
-      const batch = await generateSuggestionBatch(transcriptRef.current, apiKeyRef.current, settingsRef.current)
+      const batch = await generateSuggestionBatch(
+        transcriptRef.current,
+        apiKeyRef.current,
+        settingsRef.current,
+        meetingContextRef.current,
+        suggestionBatchesRef.current.slice(0, 2),
+        priorMeetingContextRef.current ?? undefined,
+        {
+          liveTranscriptPreview: liveTranscriptPreviewRef.current,
+          meetingState: meetingStateRef.current,
+          triggerReason: reason,
+        }
+      )
       addSuggestionBatch(batch)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate suggestions')
@@ -180,36 +244,91 @@ export default function SuggestionsPanel() {
     }
   }, [addSuggestionBatch, setIsGeneratingSuggestions])
 
-  const scheduleNext = useCallback(() => {
+  const clearAllTimers = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current)
     if (timeoutRef.current) clearTimeout(timeoutRef.current)
-    setNextSuggestionIn(SUGGESTION_INTERVAL_S)
+    if (preFireRef.current) clearTimeout(preFireRef.current)
+  }, [])
 
-    let remaining = SUGGESTION_INTERVAL_S
+  const flushTranscriptBeforeRefresh = useCallback(async () => {
+    if (!isRecording) return
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        window.removeEventListener('meeting-copilot:transcript-flushed', handleDone as EventListener)
+        reject(new Error('Transcript refresh timed out'))
+      }, 15_000)
+
+      const handleDone = (event: Event) => {
+        const detail = (event as CustomEvent<{ requestId: string; error?: string }>).detail
+        if (detail?.requestId !== requestId) return
+
+        window.clearTimeout(timeout)
+        window.removeEventListener('meeting-copilot:transcript-flushed', handleDone as EventListener)
+
+        if (detail.error) {
+          reject(new Error(detail.error))
+          return
+        }
+
+        resolve()
+      }
+
+      window.addEventListener('meeting-copilot:transcript-flushed', handleDone as EventListener)
+      window.dispatchEvent(
+        new CustomEvent('meeting-copilot:flush-transcript', {
+          detail: { requestId },
+        })
+      )
+    })
+  }, [isRecording])
+
+  // scheduleNext(delaySecs): countdown visible to user, then refresh on the cadence boundary
+  const scheduleNext = useCallback((delaySecs = SUGGESTION_INTERVAL_S) => {
+    clearAllTimers()
+    setNextSuggestionIn(delaySecs)
+
+    let remaining = delaySecs
     intervalRef.current = setInterval(() => {
       remaining = Math.max(0, remaining - 1)
       setNextSuggestionIn(remaining)
     }, 1000)
 
-    timeoutRef.current = setTimeout(async () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
+    // Pre-fire: kick off API call PRE_FIRE_S before countdown hits 0
+    const preFire = Math.max(0, (delaySecs - PRE_FIRE_S) * 1000)
+    preFireRef.current = setTimeout(async () => {
+      clearAllTimers()
       await triggerSuggestions()
       scheduleNext()
-    }, SUGGESTION_INTERVAL_S * 1000)
-  }, [triggerSuggestions, setNextSuggestionIn])
+    }, preFire)
+  }, [triggerSuggestions, setNextSuggestionIn, clearAllTimers])
 
   useEffect(() => {
     if (isRecording) {
-      scheduleNext()
+      scheduleNext(FIRST_BATCH_DELAY_S)
     } else {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+      clearAllTimers()
     }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    return clearAllTimers
+  }, [isRecording, scheduleNext, clearAllTimers])
+
+  useEffect(() => {
+    const handleTrigger = (event: Event) => {
+      const reason = ((event as CustomEvent<{ reason?: string }>).detail?.reason) || 'event'
+      const now = Date.now()
+      if (now - lastTriggeredAtRef.current < EVENT_TRIGGER_COOLDOWN_MS) return
+      lastTriggeredAtRef.current = now
+      clearAllTimers()
+      void triggerSuggestions(reason).finally(() => {
+        if (isRecording) scheduleNext()
+      })
     }
-  }, [isRecording, scheduleNext])
+
+    window.addEventListener('meeting-copilot:suggestion-trigger', handleTrigger)
+    return () => window.removeEventListener('meeting-copilot:suggestion-trigger', handleTrigger)
+  }, [clearAllTimers, isRecording, scheduleNext, triggerSuggestions])
 
   const handleClickDetail = useCallback((suggestion: Suggestion) => {
     window.dispatchEvent(
@@ -217,10 +336,16 @@ export default function SuggestionsPanel() {
     )
   }, [])
 
-  const handleManualRefresh = () => {
-    triggerSuggestions().then(() => {
+  const handleManualRefresh = async () => {
+    clearAllTimers()
+    try {
+      await flushTranscriptBeforeRefresh()
+      await triggerSuggestions()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Transcript refresh failed')
+    } finally {
       if (isRecording) scheduleNext()
-    })
+    }
   }
 
   const m = Math.floor(nextSuggestionIn / 60)
@@ -236,6 +361,14 @@ export default function SuggestionsPanel() {
           {suggestionBatches.length > 0 && (
             <span className="text-xs px-1.5 py-0.5 bg-accent-bg text-accent-dark font-medium rounded-full">
               {suggestionBatches.length} {suggestionBatches.length === 1 ? 'batch' : 'batches'}
+            </span>
+          )}
+          {priorMeetingContext && (
+            <span
+              className="text-xs px-1.5 py-0.5 bg-violet-50 border border-violet-200 text-violet-700 font-medium rounded-full"
+              title={priorMeetingContext}
+            >
+              ◈ Memory
             </span>
           )}
         </div>
@@ -255,6 +388,11 @@ export default function SuggestionsPanel() {
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
         {isGeneratingSuggestions && <SkeletonBatch />}
+        {!isGeneratingSuggestions && isRecording && liveTranscriptPreview && suggestionBatches.length === 0 && (
+          <p className="text-text-faint text-xs text-center mt-8">
+            Live transcript is flowing — suggestions can fire early on questions, risks, numbers, or blockers.
+          </p>
+        )}
         {!isGeneratingSuggestions && suggestionBatches.length === 0 && (
           <p className="text-text-faint text-xs text-center mt-12">
             {isRecording
@@ -282,8 +420,10 @@ export default function SuggestionsPanel() {
           </span>
         )}
         <button
+          type="button"
           onClick={handleManualRefresh}
-          disabled={isGeneratingSuggestions || !apiKey || transcript.length === 0}
+          disabled={isGeneratingSuggestions || !apiKey || (!isRecording && transcript.length === 0)}
+          aria-label="Refresh transcript and suggestions"
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-text-on-accent font-medium rounded-lg transition-colors"
         >
           <RefreshCw size={11} className={isGeneratingSuggestions ? 'animate-spin' : ''} />

@@ -1,0 +1,83 @@
+=== sales-objection ===
+Trying key 1
+
+> meeting-copilot@0.1.0 eval:prompts
+> node scripts/eval-prompts.ts --fixture sales-objection
+
+(node:14407) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:14407) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/karanallagh/Desktop/kg_cod/meeting-copilot/scripts/eval-prompts.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/karanallagh/Desktop/kg_cod/meeting-copilot/package.json.
+Evaluating sales-objection...
+
+Prompt evaluation results
+
+- sales-objection: Sales call with hidden objection
+  Suggestion score: 5/5
+  Detail score: 4/5
+  Impressive: yes · Ship: yes
+  Verdict: The suggestions are highly relevant, actionable, and well‑timed, offering the seller immediate value. They meet the rubric criteria and avoid anti‑patterns, making them impressive and ready to ship. | The answer is well‑grounded, directive, and immediately usable, though adding a quick proof point would make it more trustworthy.
+  Strengths: All suggestions are tightly grounded in the transcript and reference the buyer's exact concerns (onboarding speed, decision‑maker involvement, perceived similarity). | They provide concrete, ready‑to‑use phrasing that the seller can deploy immediately. | The three items cover distinct interaction types (answer, probing question, clarification), giving the seller a varied toolbox. | Each suggestion directly addresses the required concepts (onboarding, operations lead, finance, implementation, similar) without falling into generic follow‑up or summarisation. | Directly answers the buyer’s specific question about faster onboarding. | Clearly ties the response to the prospect’s expressed timeline concern.
+  Weaknesses: The batch stops short of proposing a concrete next step (e.g., scheduling a detailed implementation workshop) that could lock in momentum. | While diverse, the language could be trimmed slightly for brevity in a fast‑paced sales call. | Doesn’t include supporting evidence (e.g., a brief case study or metric) to boost credibility. | Assumes a 2‑week timeline fits all customers without acknowledging potential variability.
+
+Average suggestion score: 5.00/5
+Average detail score: 4.00/5
+PASS sales-objection with key 1
+
+=== interview-signal ===
+Trying key 1
+
+> meeting-copilot@0.1.0 eval:prompts
+> node scripts/eval-prompts.ts --fixture interview-signal
+
+(node:14640) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:14640) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/karanallagh/Desktop/kg_cod/meeting-copilot/scripts/eval-prompts.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/karanallagh/Desktop/kg_cod/meeting-copilot/package.json.
+Evaluating interview-signal...
+
+Prompt evaluation results
+
+- interview-signal: Interview loop signal extraction
+  Suggestion score: 5/5
+  Detail score: 4/5
+  Impressive: yes · Ship: yes
+  Verdict: The batch delivers highly relevant, actionable, and well‑grounded guidance that would impress a product team like TwinMind and is ready for release. | The suggestion is a solid, actionable response that is well‑grounded and directive, making it highly useful for the candidate in the moment, though it requires brief personalization before delivery.
+  Strengths: Provides concrete, STAR‑structured answer templates that hit every must‑cover concept (ownership, messy problems, shifting priorities, incomplete information, cross‑functional work). | Avoids all listed anti‑patterns (no generic excitement, no resume recitation). | Adds a probing question that demonstrates curiosity about decision‑making speed and ownership hierarchy. | Each suggestion is immediately usable in the interview flow (answer then follow‑up question). | Strong grounding in the transcript, directly referencing the interviewer's cues and timestamps. | Highly directive: provides a clear STAR framework, a ready-to-say sentence, and a follow‑up question.
+  Weaknesses: The examples are still fairly generic; they could be strengthened with a brief hint of industry‑specific context to feel more tailored to TwinMind. | Suggestion 3 could explicitly reference “messy problems” to mirror the language used by the interviewers. | Relies on placeholders (e.g., [your company], [insert %]) that the candidate must fill in, requiring a quick mental edit. | The suggested story is generic; without personal specifics it may sound rehearsed if not customized.
+
+Average suggestion score: 5.00/5
+Average detail score: 4.00/5
+PASS interview-signal with key 1
+
+=== standup-blocker ===
+Trying key 1
+
+> meeting-copilot@0.1.0 eval:prompts
+> node scripts/eval-prompts.ts --fixture standup-blocker
+
+(node:15505) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15505) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/karanallagh/Desktop/kg_cod/meeting-copilot/scripts/eval-prompts.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/karanallagh/Desktop/kg_cod/meeting-copilot/package.json.
+Evaluating standup-blocker...
+429 {"error":{"message":"Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01kmdsexffexfam0v9a6p8v664` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 198618, Requested 1903. Please try again in 3m45.072s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing","type":"tokens","code":"rate_limit_exceeded"}}
+FAIL standup-blocker with key 1
+Trying key 2
+
+> meeting-copilot@0.1.0 eval:prompts
+> node scripts/eval-prompts.ts --fixture standup-blocker
+
+(node:15522) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15522) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/karanallagh/Desktop/kg_cod/meeting-copilot/scripts/eval-prompts.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/karanallagh/Desktop/kg_cod/meeting-copilot/package.json.
+Evaluating standup-blocker...
+429 {"error":{"message":"Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01kmdsexffexfam0v9a6p8v664` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 198617, Requested 2109. Please try again in 5m13.632s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing","type":"tokens","code":"rate_limit_exceeded"}}
+FAIL standup-blocker with key 2
+
+Stopped after fixture failure: standup-blocker

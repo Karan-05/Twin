@@ -4,9 +4,11 @@ import { useRouter } from 'next/navigation'
 import { Settings, Download, Pencil, Check } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import { exportSession } from '@/lib/export'
+import { saveSession, findRelatedSessions, buildPriorContextSection } from '@/lib/memory'
 import TranscriptPanel from './TranscriptPanel'
 import SuggestionsPanel from './SuggestionsPanel'
 import ChatPanel from './ChatPanel'
+import IntelligenceStrip from './IntelligenceStrip'
 
 function ElapsedTimer({ startTime }: { startTime: number | null }) {
   const [elapsed, setElapsed] = useState(0)
@@ -42,9 +44,13 @@ export default function MeetingRoom() {
     sessionTitle,
     sessionStartTime,
     isRecording,
+    meetingContext,
+    intelligenceSummary,
+    settings,
     setApiKey,
     setSettings,
     setSessionTitle,
+    setPriorMeetingContext,
   } = useMeetingStore()
 
   const [editingTitle, setEditingTitle] = useState(false)
@@ -66,6 +72,34 @@ export default function MeetingRoom() {
   useEffect(() => {
     if (editingTitle) titleInputRef.current?.focus()
   }, [editingTitle])
+
+  // Load prior sessions from memory whenever meeting type is selected
+  useEffect(() => {
+    if (!meetingContext.meetingType) {
+      setPriorMeetingContext(null)
+      return
+    }
+    const related = findRelatedSessions(meetingContext.meetingType)
+    const ctx = buildPriorContextSection(related)
+    setPriorMeetingContext(ctx || null)
+  }, [meetingContext.meetingType, setPriorMeetingContext])
+
+  // Auto-save session to memory when recording stops (if substantive)
+  const prevRecordingRef = useRef(isRecording)
+  useEffect(() => {
+    const wasRecording = prevRecordingRef.current
+    prevRecordingRef.current = isRecording
+    if (wasRecording && !isRecording && transcript.length >= 5 && intelligenceSummary) {
+      saveSession({
+        date: new Date().toISOString(),
+        meetingType: meetingContext.meetingType,
+        userRole: meetingContext.userRole,
+        goal: meetingContext.goal,
+        summary: intelligenceSummary,
+        transcriptSample: transcript.slice(0, 3).map((c) => c.text).join(' ').slice(0, 300),
+      })
+    }
+  }, [isRecording, transcript, intelligenceSummary, meetingContext])
 
   const commitTitle = () => {
     const t = titleDraft.trim() || 'Untitled Meeting'
@@ -106,7 +140,7 @@ export default function MeetingRoom() {
                 onBlur={commitTitle}
                 className="text-sm font-medium text-text-primary bg-surface-tertiary border border-accent rounded-full px-3 py-1 outline-none w-48"
               />
-              <button onClick={commitTitle} className="text-accent hover:text-accent-dark">
+              <button type="button" onClick={commitTitle} aria-label="Save meeting title" className="text-accent hover:text-accent-dark">
                 <Check size={14} />
               </button>
             </div>
@@ -131,16 +165,20 @@ export default function MeetingRoom() {
             </span>
           )}
           <button
-            onClick={() => exportSession(transcript, suggestionBatches, messages, sessionTitle)}
+            type="button"
+            onClick={() => exportSession(transcript, suggestionBatches, messages, sessionTitle, meetingContext, intelligenceSummary, sessionStartTime, settings)}
             className="p-2 text-text-muted hover:text-text-primary hover:bg-surface-secondary rounded-lg transition-colors"
             title="Export JSON"
+            aria-label="Export meeting session as JSON"
           >
             <Download size={15} />
           </button>
           <button
+            type="button"
             onClick={() => router.push('/settings')}
             className="p-2 text-text-muted hover:text-text-primary hover:bg-surface-secondary rounded-lg transition-colors"
             title="Settings"
+            aria-label="Open settings"
           >
             <Settings size={15} />
           </button>
@@ -160,9 +198,16 @@ export default function MeetingRoom() {
         </div>
       </div>
 
+      {/* Intelligence Strip */}
+      <IntelligenceStrip />
+
       {/* Status bar — 28px */}
       <div className="flex items-center justify-between px-5 h-7 bg-surface-secondary border-t border-border text-xs text-text-faint flex-shrink-0">
-        <span>Groq · openai/gpt-oss-120b</span>
+        <span>
+          Groq · gpt-oss-120b
+          {meetingContext.meetingType && ` · ${meetingContext.meetingType}`}
+          {meetingContext.userRole && ` / ${meetingContext.userRole}`}
+        </span>
         <span>
           {transcript.length} segments · {suggestionBatches.length} batches · {messages.filter((m) => m.role === 'user').length} messages
         </span>
