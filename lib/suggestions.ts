@@ -7,9 +7,11 @@ import { buildConversationSignalsSection, extractConversationSignals } from './c
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import type { MeetingState } from './meetingState'
 import { buildMeetingStateSection } from './meetingState'
+import { withGroqTextBudget } from './groqBudget'
 
 const VALID_TYPES = new Set(['question', 'talking_point', 'answer', 'fact_check', 'clarification'])
 const OWNER_OR_TIMELINE_PATTERN = /\b(owner|who can|who owns|make the call|deadline|by when|tomorrow|friday|next step|follow up|escalat|workaround|qa|legal|security review|q[1-4])\b/i
+const SUGGESTION_MAX_TOKENS = 650
 
 // Meeting-type-specific personas with a single inline few-shot example showing the quality bar
 const MEETING_PERSONAS: Record<string, string> = {
@@ -192,15 +194,17 @@ async function fetchBatch(
 ): Promise<Suggestion[]> {
   const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true })
 
-  const response = await groq.chat.completions.create({
+  const promptText = `${systemContent}\n\n${strict ? STRICT_PREFIX + userContent : userContent}`
+
+  const response = await withGroqTextBudget(promptText, SUGGESTION_MAX_TOKENS, 'high', () => groq.chat.completions.create({
     model: 'openai/gpt-oss-120b',
     messages: [
       { role: 'system', content: systemContent },
       { role: 'user', content: strict ? STRICT_PREFIX + userContent : userContent },
     ],
     temperature: 0.45,
-    max_tokens: 900,
-  })
+    max_tokens: SUGGESTION_MAX_TOKENS,
+  }))
 
   const raw = response.choices[0]?.message?.content ?? '[]'
   const cleanedRaw = raw

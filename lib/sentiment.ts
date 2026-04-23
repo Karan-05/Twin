@@ -1,43 +1,25 @@
-import Groq from 'groq-sdk'
 import type { Sentiment } from './store'
 
-const VALID_SENTIMENTS = new Set<Sentiment>(['positive', 'neutral', 'tense', 'confused'])
+const POSITIVE_PATTERN = /\b(good|great|sounds good|love|perfect|awesome|excellent|works|agreed|agree|yes, let'?s|happy|solid)\b/i
+const TENSE_PATTERN = /\b(blocked|blocker|concern|risk|issue|problem|pushback|hard|difficult|won't|cannot|can'?t|delay|slip|objection|stall)\b/i
+const CONFUSED_PATTERN = /\b(not sure|unsure|unclear|maybe|depends|what if|how do we|why do we|who owns|does anyone know|i think|i guess|question)\b/i
+
+function classifySentiment(text: string): Sentiment {
+  if (TENSE_PATTERN.test(text)) return 'tense'
+  if (CONFUSED_PATTERN.test(text) || text.includes('?')) return 'confused'
+  if (POSITIVE_PATTERN.test(text)) return 'positive'
+  return 'neutral'
+}
 
 export async function classifySentimentBatch(
   items: { id: string; text: string }[],
   apiKey: string
 ): Promise<Array<{ id: string; sentiment: Sentiment }>> {
+  void apiKey
   if (items.length === 0) return []
 
-  const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true })
-
-  const prompt =
-    `Classify the sentiment of each meeting statement. ` +
-    `Use exactly one label per item: positive (agreement, good news, enthusiasm), ` +
-    `neutral (factual, procedural), tense (disagreement, pushback, concern), ` +
-    `confused (uncertainty, questions, unclear).\n\n` +
-    `Statements:\n` +
-    items.map((it) => `{"id":"${it.id}","text":${JSON.stringify(it.text)}}`).join('\n') +
-    `\n\nRespond ONLY with a JSON array: [{"id":"...","sentiment":"..."},...]`
-
-  const response = await groq.chat.completions.create({
-    model: 'openai/gpt-oss-120b',
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.1,
-    max_tokens: 300,
-  })
-
-  const raw = response.choices[0]?.message?.content ?? '[]'
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
-  const start = cleaned.indexOf('[')
-  const end = cleaned.lastIndexOf(']')
-  const jsonStr = start !== -1 && end !== -1 ? cleaned.slice(start, end + 1) : cleaned
-
-  const parsed = JSON.parse(jsonStr) as Array<{ id: string; sentiment: string }>
-  return parsed.map((p) => ({
-    id: p.id,
-    sentiment: VALID_SENTIMENTS.has(p.sentiment as Sentiment)
-      ? (p.sentiment as Sentiment)
-      : 'neutral',
+  return items.map((item) => ({
+    id: item.id,
+    sentiment: classifySentiment(item.text),
   }))
 }

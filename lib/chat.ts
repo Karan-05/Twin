@@ -1,11 +1,17 @@
 import Groq from 'groq-sdk'
+import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions'
 import type { Message, TranscriptChunk, MeetingContext } from './store'
 import type { AppSettings } from './settings'
 import { buildConversationSignalsSection, extractConversationSignals } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import { buildMeetingStateSection, deriveMeetingState } from './meetingState'
+import { withGroqTextBudget } from './groqBudget'
 
 const RESPONSE_GUARDRAILS = `You are a live meeting copilot. Never invent customer names, metrics, timelines, proof points, roles, or examples that are not explicitly present in the transcript or user message. If a stronger answer needs missing facts, use a fill-in-the-blank scaffold like [insert your real example] instead of fabricating.`
+const CHAT_CONTEXT_CHAR_BUDGET = 4200
+const DETAIL_CONTEXT_CHAR_BUDGET = 3600
+const CHAT_MAX_TOKENS = 700
+const DETAIL_MAX_TOKENS = 420
 
 function findFinancePressureLine(transcript: TranscriptChunk[]): TranscriptChunk | null {
   for (let index = transcript.length - 1; index >= 0; index -= 1) {
@@ -112,10 +118,24 @@ function buildMultilingualDetailOverride(
   ].join('\n')
 }
 
-function buildTranscriptContext(transcript: TranscriptChunk[], maxChunks = 0): string {
+function buildTranscriptContext(transcript: TranscriptChunk[], maxChunks = 0, maxChars = CHAT_CONTEXT_CHAR_BUDGET): string {
   const chunks = maxChunks > 0 ? transcript.slice(-maxChunks) : transcript
   if (chunks.length === 0) return '(no transcript yet)'
-  return chunks.map((c) => `[${c.timestamp}] ${c.text}`).join('\n')
+
+  const selected: string[] = []
+  let usedChars = 0
+
+  for (let index = chunks.length - 1; index >= 0; index -= 1) {
+    const line = `[${chunks[index].timestamp}] ${chunks[index].text}`
+    if (selected.length > 0 && usedChars + line.length > maxChars) break
+    selected.unshift(line)
+    usedChars += line.length
+  }
+
+  const omitted = chunks.length - selected.length
+  return omitted > 0
+    ? `(Older transcript trimmed for latency/token budget; ${omitted} earlier segments omitted.)\n${selected.join('\n')}`
+    : selected.join('\n')
 }
 
 function interpolateContext(template: string, ctx: MeetingContext): string {
@@ -175,23 +195,25 @@ export async function* streamChatResponse(
   meetingContext: MeetingContext = { meetingType: '', userRole: '', goal: '', prepNotes: '' }
 ): AsyncGenerator<string> {
   const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true })
-  const fullContext = buildTranscriptContext(transcript)
+  const fullContext = buildTranscriptContext(transcript, 0, CHAT_CONTEXT_CHAR_BUDGET)
   const signalChunks = transcript.slice(-Math.max(settings.suggestionContextWindow + 2, 8))
   const systemContent = buildPrompt(settings.chatSystemPrompt, fullContext, signalChunks, meetingContext)
+  const requestMessages: ChatCompletionMessageParam[] = [
+    { role: 'system', content: `${RESPONSE_GUARDRAILS}\n\n${systemContent}` },
+    ...messages.map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    })),
+  ]
+  const promptText = requestMessages.map((message) => message.content).join('\n\n')
 
-  const stream = await groq.chat.completions.create({
+  const stream = await withGroqTextBudget(promptText, CHAT_MAX_TOKENS, 'high', () => groq.chat.completions.create({
     model: 'openai/gpt-oss-120b',
-    messages: [
-      { role: 'system', content: `${RESPONSE_GUARDRAILS}\n\n${systemContent}` },
-      ...messages.map((m) => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      })),
-    ],
+    messages: requestMessages,
     stream: true,
-    temperature: 0.4,
-    max_tokens: 2000,
-  })
+    temperature: 0.35,
+    max_tokens: CHAT_MAX_TOKENS,
+  }))
 
   for await (const chunk of stream) {
     const delta = chunk.choices[0]?.delta?.content
@@ -209,7 +231,7 @@ export async function* streamDetailedAnswer(
   meetingContext: MeetingContext = { meetingType: '', userRole: '', goal: '', prepNotes: '' }
 ): AsyncGenerator<string> {
   const detailChunks = settings.detailContextWindow > 0 ? transcript.slice(-settings.detailContextWindow) : transcript
-  const fullContext = buildTranscriptContext(transcript, settings.detailContextWindow)
+  const fullContext = buildTranscriptContext(transcript, settings.detailContextWindow, DETAIL_CONTEXT_CHAR_BUDGET)
   const multilingualOverride = buildMultilingualDetailOverride(detailChunks, meetingContext, suggestionType)
 
   if (multilingualOverride) {
@@ -229,16 +251,17 @@ export async function* streamDetailedAnswer(
     { suggestion_type: suggestionType }
   )
 
-  const stream = await groq.chat.completions.create({
+  const promptText = `${RESPONSE_GUARDRAILS}\n\n${prompt}`
+  const stream = await withGroqTextBudget(promptText, DETAIL_MAX_TOKENS, 'high', () => groq.chat.completions.create({
     model: 'openai/gpt-oss-120b',
     messages: [
       { role: 'system', content: RESPONSE_GUARDRAILS },
       { role: 'user', content: prompt },
     ],
     stream: true,
-    temperature: 0.3,
-    max_tokens: 1500,
-  })
+    temperature: 0.25,
+    max_tokens: DETAIL_MAX_TOKENS,
+  }))
 
   for await (const chunk of stream) {
     const delta = chunk.choices[0]?.delta?.content

@@ -1,5 +1,6 @@
 import Groq from 'groq-sdk'
 import type { TranscriptChunk, IntelligenceSummary, MeetingContext } from './store'
+import { isGroqBudgetSkip, withGroqTextBudget } from './groqBudget'
 
 const EMPTY: IntelligenceSummary = { decisions: [], actionItems: [], keyData: [], openQuestions: [] }
 
@@ -17,9 +18,11 @@ const MEETING_GUIDANCE: Record<string, string> = {
 }
 
 const DEFAULT_GUIDANCE = `Focus on: firm decisions with owner or context, tasks with clear action + owner, specific numbers/names/dates, and unresolved questions that block progress.`
+const INTELLIGENCE_TRANSCRIPT_LIMIT = 10
+const INTELLIGENCE_MAX_TOKENS = 220
 
 function buildExtractionPrompt(transcript: TranscriptChunk[], meetingType?: string): string {
-  const text = transcript.map((c) => `[${c.timestamp}] ${c.text}`).join('\n')
+  const text = transcript.slice(-INTELLIGENCE_TRANSCRIPT_LIMIT).map((c) => `[${c.timestamp}] ${c.text}`).join('\n')
   const guidance = (meetingType ? MEETING_GUIDANCE[meetingType] : null) ?? DEFAULT_GUIDANCE
 
   return `Extract structured intelligence from this ${meetingType ? meetingType : 'meeting'} transcript.
@@ -53,16 +56,23 @@ export async function extractIntelligenceSummary(
 
   const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true })
   const meetingType = meetingContext?.meetingType || undefined
+  const prompt = buildExtractionPrompt(transcript, meetingType)
 
-  const response = await groq.chat.completions.create({
-    model: 'openai/gpt-oss-120b',
-    messages: [
-      { role: 'system', content: EXTRACTION_PERSONA },
-      { role: 'user', content: buildExtractionPrompt(transcript, meetingType) },
-    ],
-    temperature: 0.15,
-    max_tokens: 600,
-  })
+  let response
+  try {
+    response = await withGroqTextBudget(`${EXTRACTION_PERSONA}\n\n${prompt}`, INTELLIGENCE_MAX_TOKENS, 'low', () => groq.chat.completions.create({
+      model: 'openai/gpt-oss-120b',
+      messages: [
+        { role: 'system', content: EXTRACTION_PERSONA },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.1,
+      max_tokens: INTELLIGENCE_MAX_TOKENS,
+    }))
+  } catch (error) {
+    if (isGroqBudgetSkip(error)) return EMPTY
+    throw error
+  }
 
   try {
     const raw = response.choices[0]?.message?.content ?? '{}'

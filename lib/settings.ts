@@ -191,8 +191,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   liveSuggestionPrompt: DEFAULT_LIVE_SUGGESTION_PROMPT,
   clickDetailPrompt: DEFAULT_CLICK_DETAIL_PROMPT,
   chatSystemPrompt: DEFAULT_CHAT_SYSTEM_PROMPT,
-  suggestionContextWindow: 6,
-  detailContextWindow: 0,
+  suggestionContextWindow: 4,
+  detailContextWindow: 8,
 }
 
 export function loadSettings(): AppSettings {

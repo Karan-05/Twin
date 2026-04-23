@@ -22,6 +22,8 @@ export default function IntelligenceStrip() {
     meetingContext,
     intelligenceSummary,
     isExtractingIntelligence,
+    isGeneratingSuggestions,
+    isStreamingChat,
     setIntelligenceSummary,
     setIsExtractingIntelligence,
   } = useMeetingStore()
@@ -37,7 +39,7 @@ export default function IntelligenceStrip() {
   useEffect(() => { meetingContextRef.current = meetingContext }, [meetingContext])
 
   const runExtraction = async () => {
-    if (!apiKeyRef.current || transcriptRef.current.length < 2) return
+    if (!apiKeyRef.current || transcriptRef.current.length < 2 || isGeneratingSuggestions || isStreamingChat) return
     setIsExtractingIntelligence(true)
     try {
       const summary = await extractIntelligenceSummary(
@@ -68,7 +70,7 @@ export default function IntelligenceStrip() {
       if (timerRef.current) clearInterval(timerRef.current)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRecording])
+  }, [isRecording, isGeneratingSuggestions, isStreamingChat])
 
   const hasAnyData = intelligenceSummary && (
     intelligenceSummary.decisions.length > 0 ||
