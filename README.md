@@ -2,7 +2,7 @@
 
 A production-grade live meeting intelligence assistant. Transcribes your mic with a fast provisional lane plus stable timestamped chunks, surfaces 3 context-aware AI suggestions on cadence and on important conversation events, and answers questions about the meeting via chat — all running in the browser against the Groq API.
 
-**Live demo:** replace with your deployed URL before submission  
+**Live demo:** update with your final Vercel URL before submission  
 **Stack:** Next.js 14 · TypeScript · Tailwind CSS · Zustand · Groq SDK
 
 ---
@@ -11,7 +11,7 @@ A production-grade live meeting intelligence assistant. Transcribes your mic wit
 
 ### Option A — Local dev
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/Karan-05/Twin.git
 cd meeting-copilot
 npm install
 npm run dev
