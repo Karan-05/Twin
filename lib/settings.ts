@@ -187,6 +187,34 @@ export interface AppSettings {
   detailContextWindow: number
 }
 
+const SETTINGS_KEY = 'meeting_copilot_settings'
+const SETTINGS_VERSION_KEY = 'meeting_copilot_settings_version'
+const SETTINGS_VERSION = '2026-04-23-v1'
+const MAX_PROMPT_LENGTH = 24_000
+
+function sanitizePrompt(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > MAX_PROMPT_LENGTH) return fallback
+  return trimmed
+}
+
+function sanitizeNumber(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || Number.isNaN(value)) return fallback
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+function sanitizeSettings(raw: unknown): AppSettings {
+  const parsed = (raw && typeof raw === 'object') ? raw as Partial<AppSettings> : {}
+  return {
+    liveSuggestionPrompt: sanitizePrompt(parsed.liveSuggestionPrompt, DEFAULT_SETTINGS.liveSuggestionPrompt),
+    clickDetailPrompt: sanitizePrompt(parsed.clickDetailPrompt, DEFAULT_SETTINGS.clickDetailPrompt),
+    chatSystemPrompt: sanitizePrompt(parsed.chatSystemPrompt, DEFAULT_SETTINGS.chatSystemPrompt),
+    suggestionContextWindow: sanitizeNumber(parsed.suggestionContextWindow, DEFAULT_SETTINGS.suggestionContextWindow, 1, 8),
+    detailContextWindow: sanitizeNumber(parsed.detailContextWindow, DEFAULT_SETTINGS.detailContextWindow, 0, 12),
+  }
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   liveSuggestionPrompt: DEFAULT_LIVE_SUGGESTION_PROMPT,
   clickDetailPrompt: DEFAULT_CLICK_DETAIL_PROMPT,
@@ -196,15 +224,25 @@ export const DEFAULT_SETTINGS: AppSettings = {
 }
 
 export function loadSettings(): AppSettings {
+  if (typeof window === 'undefined') return DEFAULT_SETTINGS
   try {
-    const raw = localStorage.getItem('meeting_copilot_settings')
-    if (!raw) return DEFAULT_SETTINGS
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }
+    const storedVersion = localStorage.getItem(SETTINGS_VERSION_KEY)
+    const raw = localStorage.getItem(SETTINGS_KEY)
+
+    if (!raw || storedVersion !== SETTINGS_VERSION) {
+      saveSettings(DEFAULT_SETTINGS)
+      return DEFAULT_SETTINGS
+    }
+
+    return sanitizeSettings(JSON.parse(raw))
   } catch {
     return DEFAULT_SETTINGS
   }
 }
 
 export function saveSettings(settings: AppSettings): void {
-  localStorage.setItem('meeting_copilot_settings', JSON.stringify(settings))
+  if (typeof window === 'undefined') return
+  const sanitized = sanitizeSettings(settings)
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(sanitized))
+  localStorage.setItem(SETTINGS_VERSION_KEY, SETTINGS_VERSION)
 }

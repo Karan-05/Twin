@@ -26,7 +26,7 @@ const PROMPT_FIELDS = [
 
 export default function SettingsPage() {
   const router = useRouter()
-  const { setSettings } = useMeetingStore()
+  const { setSettings, setApiKey: setStoreApiKey } = useMeetingStore()
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -46,6 +46,7 @@ export default function SettingsPage() {
     if (!apiKey.trim()) return
     localStorage.setItem('groq_api_key', apiKey.trim())
     saveSettings(settings)
+    setStoreApiKey(apiKey.trim())
     setSettings(settings)
     setSaved(true)
     setTimeout(() => router.push('/'), 800)

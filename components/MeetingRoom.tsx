@@ -5,6 +5,7 @@ import { Settings, Download, Pencil, Check } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import { exportSession } from '@/lib/export'
 import { saveSession, findRelatedSessions, buildPriorContextSection } from '@/lib/memory'
+import { loadSettings } from '@/lib/settings'
 import TranscriptPanel from './TranscriptPanel'
 import SuggestionsPanel from './SuggestionsPanel'
 import ChatPanel from './ChatPanel'
@@ -60,13 +61,7 @@ export default function MeetingRoom() {
   useEffect(() => {
     const key = localStorage.getItem('groq_api_key') || ''
     setApiKey(key)
-    const raw = localStorage.getItem('meeting_copilot_settings')
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw)
-        setSettings(parsed)
-      } catch { /* use defaults */ }
-    }
+    setSettings(loadSettings())
   }, [setApiKey, setSettings])
 
   useEffect(() => {
