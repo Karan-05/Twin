@@ -1,21 +1,14 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import MeetingRoom from '@/components/MeetingRoom'
 
 export default function Home() {
-  const router = useRouter()
-  const [ready, setReady] = useState(false)
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    const key = localStorage.getItem('groq_api_key')
-    if (!key) {
-      router.push('/settings')
-    } else {
-      setReady(true)
-    }
-  }, [router])
+    setMounted(true)
+  }, [])
 
-  if (!ready) return null
+  if (!mounted) return null
   return <MeetingRoom />
 }

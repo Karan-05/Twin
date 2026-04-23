@@ -59,15 +59,14 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen bg-surface-secondary flex items-start justify-center p-6 overflow-y-auto">
       <div className="w-full max-w-2xl">
-        {hasExisting && (
-          <button
-            onClick={() => router.push('/')}
-            className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-sm mb-6 transition-colors"
-          >
-            <ArrowLeft size={14} />
-            Back to meeting
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => router.push('/')}
+          className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-sm mb-6 transition-colors"
+        >
+          <ArrowLeft size={14} />
+          {hasExisting ? 'Back to meeting' : 'Go to app'}
+        </button>
 
         <div className="bg-surface-primary border border-border-strong rounded-2xl p-8 space-y-8">
           <div>
