@@ -353,7 +353,7 @@ export default function SuggestionsPanel() {
   const countdownStr = `${m}:${String(s).padStart(2, '0')}`
 
   return (
-    <div className="flex flex-col h-full bg-surface-primary">
+    <div className="flex flex-col h-full min-h-0 bg-surface-primary">
       {/* Column header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface-secondary flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -386,7 +386,7 @@ export default function SuggestionsPanel() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-4">
         {isGeneratingSuggestions && <SkeletonBatch />}
         {!isGeneratingSuggestions && isRecording && liveTranscriptPreview && suggestionBatches.length === 0 && (
           <p className="text-text-faint text-xs text-center mt-8">

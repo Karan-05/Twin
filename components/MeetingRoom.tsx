@@ -181,14 +181,14 @@ export default function MeetingRoom() {
       </header>
 
       {/* 3-column layout */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className="w-1/3 border-r border-border overflow-hidden flex flex-col">
+      <div className="flex flex-1 overflow-hidden min-h-0">
+        <div className="w-1/3 border-r border-border overflow-hidden flex flex-col min-h-0 min-w-0">
           <TranscriptPanel />
         </div>
-        <div className="w-1/3 border-r border-border overflow-hidden flex flex-col">
+        <div className="w-1/3 border-r border-border overflow-hidden flex flex-col min-h-0 min-w-0">
           <SuggestionsPanel />
         </div>
-        <div className="w-1/3 overflow-hidden flex flex-col">
+        <div className="w-1/3 overflow-hidden flex flex-col min-h-0 min-w-0">
           <ChatPanel />
         </div>
       </div>

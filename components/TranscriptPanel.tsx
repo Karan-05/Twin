@@ -350,6 +350,18 @@ export default function TranscriptPanel() {
   const [copied, setCopied] = useState<string | null>(null)
   const [audioMode, setAudioMode] = useState<'mic' | 'system'>('mic')
   const [highlightedId, setHighlightedId] = useState<string | null>(null)
+  const [showContextForm, setShowContextForm] = useState(transcript.length === 0)
+
+  useEffect(() => {
+    if (isRecording) {
+      setShowContextForm(false)
+      return
+    }
+
+    if (transcript.length === 0) {
+      setShowContextForm(true)
+    }
+  }, [isRecording, transcript.length])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
@@ -687,7 +699,7 @@ export default function TranscriptPanel() {
   const contextSet = meetingContext.meetingType || meetingContext.userRole || meetingContext.prepNotes
 
   return (
-    <div className="flex flex-col h-full bg-surface-primary">
+    <div className="flex flex-col h-full min-h-0 bg-surface-primary">
       {/* Column header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface-secondary flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -698,13 +710,24 @@ export default function TranscriptPanel() {
             </span>
           )}
         </div>
-        {isProcessing && (
-          <span className="text-xs text-accent animate-pulse">Transcribing…</span>
-        )}
+        <div className="flex items-center gap-2">
+          {!isRecording && transcript.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowContextForm((value) => !value)}
+              className="text-[11px] text-text-faint hover:text-text-primary transition-colors"
+            >
+              {showContextForm ? 'Hide context' : 'Edit context'}
+            </button>
+          )}
+          {isProcessing && (
+            <span className="text-xs text-accent animate-pulse">Transcribing…</span>
+          )}
+        </div>
       </div>
 
       {/* Context form — only shown when not recording */}
-      {!isRecording && <ContextForm />}
+      {!isRecording && showContextForm && <ContextForm />}
 
       {/* Active context pill while recording */}
       {isRecording && contextSet && (
@@ -743,7 +766,7 @@ export default function TranscriptPanel() {
       )}
 
       {/* Transcript chunks */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2">
         {transcript.length === 0 && !liveTranscriptPreview ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 mt-4">
             <p className="text-text-faint text-xs text-center">

@@ -13,6 +13,22 @@ const VALID_TYPES = new Set(['question', 'talking_point', 'answer', 'fact_check'
 const OWNER_OR_TIMELINE_PATTERN = /\b(owner|who can|who owns|make the call|deadline|by when|tomorrow|friday|next step|follow up|escalat|workaround|qa|legal|security review|q[1-4])\b/i
 const SUGGESTION_MAX_TOKENS = 650
 
+function extractTopicLabels(chunks: TranscriptChunk[]): string[] {
+  const combined = chunks.map((chunk) => chunk.text).join(' ')
+  const matches = combined.match(/\b(?:[A-Z][a-z]+|[A-Z]{2,})(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}|AI|Speech|Studio|Audio|Labs))*\b/g) ?? []
+  const cleaned = matches
+    .map((item) => item.trim())
+    .filter((item) => item.length > 2)
+    .filter((item) => !/^I$|^So$|^The$/.test(item))
+
+  return Array.from(new Set(cleaned)).slice(0, 5)
+}
+
+function compactTopic(topic?: string): string {
+  if (!topic) return 'latest topic'
+  return topic.length > 28 ? `${topic.slice(0, 25).trimEnd()}…` : topic
+}
+
 // Meeting-type-specific personas with a single inline few-shot example showing the quality bar
 const MEETING_PERSONAS: Record<string, string> = {
   'Sales Call': `You are a veteran enterprise sales strategist who has closed $200M+ in deals. You instantly read buying signals, hidden objections, and champion/blocker dynamics. You know the exact right question at the exact right moment is worth more than any pitch deck.
@@ -429,18 +445,49 @@ function rankSuggestions(
 
 function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Suggestion[] {
   const signals = extractConversationSignals(recentChunks)
+  const topicLabels = extractTopicLabels(recentChunks)
+  const latest = recentChunks[recentChunks.length - 1]
   const fallbacks: Suggestion[] = []
 
+  const primaryTopic = topicLabels[0] || signals.topics[0] || 'latest topic'
+  const comparisonSet = topicLabels.slice(0, 4)
+  const comparisonText = comparisonSet.length > 1 ? comparisonSet.join(', ') : primaryTopic
+
   if (signals.questions[0]) {
+    const question = signals.questions[0]
     fallbacks.push({
       id: generateId(),
       type: 'answer',
-      title: 'Answer the open question',
-      detail: `A direct question is still hanging: "${signals.questions[0].text}" [${signals.questions[0].timestamp}]. Give a concise answer now or ask one clarifying follow-up before the conversation moves on.`,
-      say: 'Answer the question directly before the room moves on.',
-      whyNow: 'An unanswered question is the highest-leverage interruption in the room.',
-      listenFor: 'Whether they accept the answer or expose a deeper objection.',
+      title: `Answer on ${compactTopic(primaryTopic)}`,
+      detail: `They explicitly asked: "${question.text}" [${question.timestamp}]. Answer by anchoring on ${primaryTopic} and placing it against the shortlist already named in the transcript (${comparisonText}) instead of drifting into a generic product summary.`,
+      say: comparisonSet.length > 1
+        ? `Let me anchor on ${primaryTopic}: compared with ${comparisonSet.slice(1, 3).join(' and ')}, the real question is which one fits your use case best.`
+        : `Let me anchor on ${primaryTopic} first and answer that directly before we widen the comparison.`,
+      whyNow: 'A direct question just landed, so the best move is a focused answer on the exact topic they named.',
+      listenFor: 'Which evaluation axis matters most: quality, multilingual support, creator workflow, or stack fit.',
     })
+
+    fallbacks.push({
+      id: generateId(),
+      type: 'question',
+      title: 'Choose the comparison axis',
+      detail: `The transcript already contains a shortlist (${comparisonText}). Ask which dimension they actually care about so you can compare on one axis instead of giving a wandering overview.`,
+      say: 'Which matters most here — voice quality, multilingual coverage, creator workflow, or enterprise stack fit?',
+      whyNow: 'That one question turns a generic explainer into a useful recommendation.',
+      listenFor: 'A concrete buying/evaluation criterion instead of more tool names.',
+    })
+
+    fallbacks.push({
+      id: generateId(),
+      type: 'talking_point',
+      title: 'Use the shortlist directly',
+      detail: `You already named ${comparisonText}${latest ? ` by [${latest.timestamp}]` : ''}. The most useful move is to compare ${primaryTopic} against that shortlist directly, not restart from definitions.`,
+      say: `Since we've already named ${comparisonText}, I'll compare ${primaryTopic} directly against that shortlist instead of describing it in isolation.`,
+      whyNow: 'The conversation has enough context for a sharper comparison, not another intro.',
+      listenFor: 'Whether they want a recommendation, a technical comparison, or a workflow fit.',
+    })
+
+    return sanitizeSuggestions(fallbacks)
   }
 
   if (signals.risks[0]) {
@@ -480,26 +527,34 @@ function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Suggestion[]
   }
 
   if (fallbacks.length === 0) {
-    const latest = recentChunks[recentChunks.length - 1]
-    const topic = extractConversationSignals(recentChunks).topics.slice(0, 2).join(' / ') || 'current topic'
+    const topic = signals.topics.slice(0, 2).join(' / ') || primaryTopic || 'current topic'
     fallbacks.push(
       {
         id: generateId(),
+        type: 'talking_point',
+        title: `Re-anchor on ${compactTopic(primaryTopic)}`,
+        detail: `The live thread is really about ${topic}. Summarize it in one sharp line and move the room toward a recommendation, comparison, or decision instead of letting it stay as a loose overview.`,
+        say: `The real thread here is ${primaryTopic} — let me narrow this to the one recommendation or comparison that matters most.`,
+        whyNow: 'The conversation has topic signal, but not enough structure yet.',
+        listenFor: 'Whether they want a recommendation, a comparison, or a deeper technical breakdown.',
+      },
+      {
+        id: generateId(),
         type: 'question',
-        title: 'Expose the real blocker',
-        detail: `Use the latest thread on ${topic} to ask what is actually blocking progress right now. If the answer stays vague, press for a concrete owner, constraint, or decision.`,
-        say: 'What is the actual blocker here — owner, constraint, or decision?',
-        whyNow: 'The conversation sounds fuzzy and needs a single forcing question.',
-        listenFor: 'Whether the blocker is truly known or still hiding behind vague language.',
+        title: 'Ask for the use case',
+        detail: `The fastest way to make ${primaryTopic} useful is to ask what they are actually optimizing for — evaluation, creator workflow, multilingual coverage, or production use.`,
+        say: `Before I go broader, what use case are we optimizing for with ${primaryTopic}?`,
+        whyNow: 'That turns a generic explainer into a relevant recommendation.',
+        listenFor: 'A concrete use case you can answer against instead of abstract interest.',
       },
       {
         id: generateId(),
         type: 'clarification',
-        title: 'Define success explicitly',
-        detail: `The current discussion still needs a sharper definition of success. Ask what outcome, deadline, or decision would make this topic resolved before the meeting moves on from [${latest?.timestamp ?? 'now'}].`,
-        say: 'What outcome would make this topic resolved today?',
+        title: 'Define the decision rule',
+        detail: `The discussion still needs a sharper decision rule. Ask what outcome, comparison, or next step would make this topic resolved before the meeting moves on${latest ? ` from [${latest.timestamp}]` : ''}.`,
+        say: 'What would make this topic resolved today — a recommendation, a comparison, or a concrete next step?',
         whyNow: 'Without a decision rule, the room will keep circling.',
-        listenFor: 'A concrete outcome or date instead of more brainstorming.',
+        listenFor: 'A concrete outcome instead of more broad explanation.',
       }
     )
   }
@@ -580,7 +635,7 @@ export async function generateSuggestionBatch(
       suggestions.push(fallback)
       continue
     }
-    suggestions.push({
+    const secondaryFallback: Suggestion = {
       id: generateId(),
       type: 'clarification',
       title: 'Pin down the blocker',
@@ -588,7 +643,27 @@ export async function generateSuggestionBatch(
       say: 'What exactly is still unclear, and who is resolving it?',
       whyNow: 'A final clarifying move is better than ending on mushy agreement.',
       listenFor: 'A clear blocker statement and an owner with a date.',
-    })
+    }
+    if (!isSemanticDuplicate(secondaryFallback, suggestions) && !isSemanticDuplicate(secondaryFallback, previousSuggestions)) {
+      suggestions.push(secondaryFallback)
+      continue
+    }
+
+    const tertiaryFallback: Suggestion = {
+      id: generateId(),
+      type: 'talking_point',
+      title: 'Re-anchor the thread',
+      detail: 'Summarize the latest topic in one crisp line and move the room toward one decision, comparison, or next step instead of another broad pass.',
+      say: 'Let me re-anchor this to the one decision we actually need from this thread.',
+      whyNow: 'A concrete re-anchor is better than another generic loop.',
+      listenFor: 'Whether the room names a specific decision or keeps drifting.',
+    }
+    if (!isSemanticDuplicate(tertiaryFallback, suggestions) && !isSemanticDuplicate(tertiaryFallback, previousSuggestions)) {
+      suggestions.push(tertiaryFallback)
+      continue
+    }
+
+    break
   }
 
   return {
