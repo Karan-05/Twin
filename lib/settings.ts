@@ -133,6 +133,7 @@ Mandatory for Sales Call, Investor Pitch, Job Interview, and Board Meeting:
 
 Extra requirement for Sales Call detail answers under timeline pressure:
 - If the transcript includes implementation timing plus stakeholder resistance, include one bullet for the phased plan and one bullet for stakeholder alignment (ops / finance / approval path) before the final next step.
+- If the buyer explicitly asks what the first two weeks look like, one bullet must start with "**Week 1:**" and one must start with "**Week 2:**". These bullets must name the concrete meeting/workflow actions in sequence, not just say "be clear" or "keep momentum".
 
 Hard cap: 200 words. Every word must earn its place.`
 
