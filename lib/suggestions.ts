@@ -3,7 +3,7 @@ import { generateId, formatTimestamp } from './utils'
 import { withRetry } from './retry'
 import type { Suggestion, SuggestionBatch, TranscriptChunk, MeetingContext } from './store'
 import type { AppSettings } from './settings'
-import { buildConversationSignalsSection, extractConversationSignals, extractPrimaryTopic } from './contextSignals'
+import { buildConversationSignalsSection, extractConversationSignals, extractPrimaryTopic, isTechnicalQuestion, selectActionableQuestion } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import type { MeetingState } from './meetingState'
 import { buildMeetingStateSection } from './meetingState'
@@ -103,6 +103,23 @@ function buildSpeakableAnswerLine(topic: string, category: QuestionCategory): st
     default:
       return `Let me answer ${topic} directly, then make it concrete with the one implication that matters most here.`
   }
+}
+
+function isSellerishSalesContext(ctx: MeetingContext): boolean {
+  return ctx.meetingType === 'Sales Call' && /\b(seller|account executive|sales manager)\b/i.test(ctx.userRole || '')
+}
+
+function inferSalesWorkflows(chunks: TranscriptChunk[]): string[] {
+  const text = chunks.map((chunk) => chunk.text).join(' ').toLowerCase()
+  const workflows: string[] = []
+
+  if (/\bdeal sourc|outbound|calling\b/.test(text)) workflows.push('outbound calling and deal sourcing')
+  if (/\bfollow[- ]?up\b/.test(text)) workflows.push('follow-up conversations')
+  if (/\bqualif(y|ication)\b/.test(text)) workflows.push('lead qualification')
+  if (/\bappointment|book meetings?\b/.test(text)) workflows.push('meeting booking')
+  if (/\binbound|support\b/.test(text)) workflows.push('inbound support')
+
+  return Array.from(new Set(workflows)).slice(0, 3)
 }
 
 function buildQuestionTitle(topic: string, category: QuestionCategory): string {
@@ -554,26 +571,68 @@ function rankSuggestions(
   return chosen.slice(0, 3)
 }
 
-export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Suggestion[] {
+export function buildFallbackSuggestions(
+  recentChunks: TranscriptChunk[],
+  meetingContext: MeetingContext = { meetingType: '', userRole: '', goal: '', prepNotes: '' }
+): Suggestion[] {
   const signals = extractConversationSignals(recentChunks)
   const topicLabels = extractTopicLabels(recentChunks)
   const latest = recentChunks[recentChunks.length - 1]
   const fallbacks: Suggestion[] = []
+  const actionableQuestion = selectActionableQuestion(recentChunks, meetingContext)
 
-  const rawPrimary = extractPrimaryTopic(recentChunks) || topicLabels[0] || signals.topics[0] || ''
+  const rawPrimary = extractPrimaryTopic(recentChunks, `${actionableQuestion?.text ?? ''} ${meetingContext.goal ?? ''}`) || topicLabels[0] || signals.topics[0] || ''
   const primaryTopic = rawPrimary.length >= 4 ? rawPrimary : 'latest topic'
   const comparisonSet = topicLabels.slice(0, 4)
   const comparisonText = comparisonSet.length > 1 ? comparisonSet.join(', ') : primaryTopic
 
-  if (signals.questions[0]) {
-    const question = signals.questions[0]
+  if (actionableQuestion) {
+    const question = actionableQuestion
     const hasShortlist = comparisonSet.length >= 2
     const category = inferQuestionCategory(question.text)
 
-    const TECHNICAL_RE = /how (does|do|can|to)|architect|pipeline|scale|real.?time|latency|hallucin|production|inference|accuracy|model|deploy|securi|api\b|integrat|implement/i
     const rawText = [question.text, ...recentChunks.map((c) => c.text)].join(' ')
+    const sellerishSales = isSellerishSalesContext(meetingContext)
 
-    if (TECHNICAL_RE.test(rawText)) {
+    if (sellerishSales && /\bvoice ai agents?\b|\bvoice agents?\b|\bagents?\b/.test(`${primaryTopic} ${rawText}`) && !isTechnicalQuestion(rawText, meetingContext)) {
+      const workflows = inferSalesWorkflows(recentChunks)
+      const workflowSummary = workflows[0] ?? 'customer conversations'
+      const workflowList = workflows.length > 1 ? workflows.join(', ') : workflowSummary
+
+      fallbacks.push({
+        id: generateId(),
+        type: 'answer',
+        title: `Define the ${compactTopic(primaryTopic)} clearly`,
+        detail: `They asked: "${question.text}" [${question.timestamp}]. Answer this as a product/use-case question, not an architecture question. Name the main workflow categories already mentioned — ${workflowList} — and explain which conversation jobs these agents actually handle.`,
+        say: `We are mainly talking about ${workflowSummary} agents that stay available 24/7, handle repetitive customer conversations, and cost less than a human team for that workflow.`,
+        whyNow: 'The buyer asked what kind of agents these are, so they need the product category and use case before any deeper detail.',
+        listenFor: 'Which workflow they actually care about first — that tells you where to anchor the rest of the pitch.',
+      })
+
+      fallbacks.push({
+        id: generateId(),
+        type: 'question',
+        title: 'Pick the first workflow',
+        detail: `Do not keep pitching "agents" in the abstract. Ask which workflow matters most first — for example ${workflowList} — so the conversation moves from generic curiosity to a concrete buying use case.`,
+        say: `Which workflow matters most for you first — ${workflowList}? That will tell me which kind of agent is actually relevant.`,
+        whyNow: 'One concrete workflow is easier to evaluate than a broad AI-agent pitch.',
+        listenFor: 'A specific workflow, team, or pain point instead of general curiosity.',
+      })
+
+      fallbacks.push({
+        id: generateId(),
+        type: 'talking_point',
+        title: 'Anchor on the 24/7 economics',
+        detail: `Your best angle is not "AI agents" as a category — it is the workflow economics already in the transcript: available **24/7**, more consistent engagement, and lower cost than a purely human calling workflow. Tie that to one workflow instead of listing features.`,
+        say: `The useful way to evaluate this is not "all possible agents" — it is which workflow benefits most from 24/7 coverage and lower cost right away.`,
+        whyNow: 'That shifts the conversation from curiosity about AI into business value and fit.',
+        listenFor: 'Whether they respond to cost, coverage, or a specific workflow bottleneck.',
+      })
+
+      return sanitizeSuggestions(fallbacks)
+    }
+
+    if (isTechnicalQuestion(rawText, meetingContext)) {
       const topic = primaryTopic || 'the system'
       const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${rawText}`)
 
@@ -898,7 +957,7 @@ export async function generateSuggestionBatch(
 
   suggestions = rankSuggestions(suggestions, promptChunks, meetingContext, options.meetingState)
 
-  const fallbackSuggestions = buildFallbackSuggestions(promptChunks)
+  const fallbackSuggestions = buildFallbackSuggestions(promptChunks, meetingContext)
   const previousTitleKeys = new Set(previousSuggestions.map((s) => s.title.trim().toLowerCase()))
   for (const fallback of fallbackSuggestions) {
     if (suggestions.length >= 3) break

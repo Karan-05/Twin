@@ -303,6 +303,7 @@ export default function ChatPanel() {
             suggestion.title,
             suggestion.type,
             suggestion.detail,
+            suggestion.say,
             transcript,
             apiKey,
             settings,

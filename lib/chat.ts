@@ -2,7 +2,7 @@ import Groq from 'groq-sdk'
 import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions'
 import type { Message, TranscriptChunk, MeetingContext } from './store'
 import type { AppSettings } from './settings'
-import { buildConversationSignalsSection, extractConversationSignals, extractPrimaryTopic } from './contextSignals'
+import { buildConversationSignalsSection, extractConversationSignals, extractPrimaryTopic, selectActionableQuestion } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import { buildMeetingStateSection, deriveMeetingState } from './meetingState'
 import { withGroqTextBudget } from './groqBudget'
@@ -26,6 +26,19 @@ function inferQuestionCategory(text: string): QuestionCategory {
   return 'general'
 }
 
+function isSellerishSalesContext(meetingContext: MeetingContext): boolean {
+  return meetingContext.meetingType === 'Sales Call' && /\b(seller|account executive|sales manager)\b/i.test(meetingContext.userRole || '')
+}
+
+function inferSalesWorkflowSummary(transcript: TranscriptChunk[]): string {
+  const text = transcript.map((chunk) => chunk.text).join(' ').toLowerCase()
+  if (/\bdeal sourc|outbound|calling\b/.test(text)) return 'outbound calling and deal sourcing'
+  if (/\bfollow[- ]?up\b/.test(text)) return 'follow-up conversations'
+  if (/\bqualif(y|ication)\b/.test(text)) return 'lead qualification'
+  if (/\bappointment|book meetings?\b/.test(text)) return 'meeting booking'
+  return 'customer conversations'
+}
+
 function buildLocalChatFallback(
   transcript: TranscriptChunk[],
   meetingContext: MeetingContext,
@@ -34,7 +47,7 @@ function buildLocalChatFallback(
   const signals = extractConversationSignals(transcript.slice(-8))
   const latest = transcript[transcript.length - 1]
   const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${userMessage}`) || signals.topics.slice(0, 2).join(' / ') || meetingContext.goal || 'current topic'
-  const question = signals.questions[0]
+  const question = selectActionableQuestion(transcript.slice(-8), meetingContext)
   const category = inferQuestionCategory(question?.text ?? userMessage)
   const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${userMessage} ${question?.text ?? ''}`)
 
@@ -92,18 +105,23 @@ function buildLocalDetailedFallback(
   suggestionTitle: string,
   suggestionType: string,
   suggestionDetail: string,
+  suggestionSay: string | undefined,
   transcript: TranscriptChunk[],
   meetingContext: MeetingContext
 ): string {
   const signals = extractConversationSignals(transcript.slice(-8))
   const latest = transcript[transcript.length - 1]
-  const openQuestion = signals.questions[0]
+  const openQuestion = selectActionableQuestion(transcript.slice(-8), meetingContext)
   const riskyItem = signals.numericClaims[0] || signals.risks[0]
   const commitment = signals.commitments[0]
   const goalClause = meetingContext.goal ? `**${meetingContext.goal}**` : 'your stated goal'
   const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${suggestionTitle}`) || 'current topic'
   const category = inferQuestionCategory(openQuestion?.text ?? suggestionTitle)
   const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`)
+  const salesVoiceAgents =
+    isSellerishSalesContext(meetingContext) &&
+    /\bvoice ai agents?\b|\bvoice agents?\b|\bagents?\b/.test(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`)
+  const workflowSummary = inferSalesWorkflowSummary(transcript)
 
   const anchor =
     suggestionType === 'answer' || suggestionType === 'question' ? openQuestion ?? latest
@@ -129,6 +147,19 @@ function buildLocalDetailedFallback(
     ].join('\n')
   }
 
+  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && salesVoiceAgents) {
+    return [
+      evidenceLine,
+      '',
+      '**In short:** Define the agent category clearly, tie it to one workflow, then ask which workflow they want first.',
+      `- They are not asking for architecture yet. They are asking what kind of **${topic}** you actually mean in business terms.`,
+      `- Anchor on the workflow already in the transcript: **${workflowSummary}**, with **24/7** availability and lower cost than a purely human calling workflow [${latest?.timestamp ?? 'LIVE'}].`,
+      `- Keep the answer concrete: category first, use case second, business value third. Do not drift into generic AI language.`,
+      `> "Say: We are mainly talking about ${workflowSummary} agents that stay available 24/7, handle repetitive customer conversations, and cost less than a purely human team for that workflow. The real question is which workflow you would want to automate first."`,
+      `- [ ] Next step to lock: ask which workflow matters most for them first, then tailor the rest of the pitch to that one path.`,
+    ].join('\n')
+  }
+
   let inShort: string
   let bullets: string[]
 
@@ -146,7 +177,9 @@ function buildLocalDetailedFallback(
             : category === 'comparison'
               ? '- Structure: pick one comparison axis first, answer on that axis, then add nuance only if needed.'
               : '- Structure: direct answer first, one concrete implication second, one next move third.',
-        category === 'definition'
+        suggestionSay
+          ? `> "Say: ${suggestionSay}"`
+          : category === 'definition'
           ? `> "Say: Let me answer ${topic} directly: first what it is, then how to think about it practically, then why it matters here."`
           : category === 'mechanism'
             ? `> "Say: The clearest way to explain ${topic} is the path from input to output, plus the main trade-off that shapes the design."`
@@ -332,6 +365,7 @@ export async function* streamDetailedAnswer(
   suggestionTitle: string,
   suggestionType: string,
   suggestionDetail: string,
+  suggestionSay: string | undefined,
   transcript: TranscriptChunk[],
   apiKey: string,
   settings: AppSettings,
@@ -367,7 +401,7 @@ export async function* streamDetailedAnswer(
     }))
   } catch (err) {
     console.error('[streamDetailedAnswer] Groq failed, using local fallback:', err)
-    yield buildLocalDetailedFallback(suggestionTitle, suggestionType, suggestionDetail, transcript, meetingContext)
+    yield buildLocalDetailedFallback(suggestionTitle, suggestionType, suggestionDetail, suggestionSay, transcript, meetingContext)
     return
   }
 

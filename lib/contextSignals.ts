@@ -44,6 +44,7 @@ const STOPWORDS = new Set([
   'actual', 'entire', 'general', 'certain', 'specific', 'different', 'important', 'possible',
   'large', 'small', 'long', 'short', 'high', 'able', 'using', 'used', 'use', 'work', 'works',
   'good', 'great', 'best', 'better', 'right', 'wrong', 'help', 'helps', 'helped',
+  'thank', 'thanks',
 ])
 
 const LOW_VALUE_TOPIC_WORDS = new Set([
@@ -53,6 +54,8 @@ const LOW_VALUE_TOPIC_WORDS = new Set([
 ])
 
 const KNOWN_TECH_TERMS: Array<[RegExp, string]> = [
+  [/\bvoice ai agents?\b/i, 'Voice AI agents'],
+  [/\bvoice agents?\b/i, 'voice agents'],
   [/\bllms?\b/i, 'LLM'],
   [/\blarge language models?\b/i, 'LLM'],
   [/\brag\b/i, 'RAG'],
@@ -69,6 +72,11 @@ const QUESTION_TOPIC_PATTERNS = [
   /\bhow\s+(.+?)\s+works?\b/i,
   /\b(?:what is|what's|how does|how do|explain|walk me through|tell me about|talk about|discuss(?:ing)?)\s+(.+?)(?:[?.,]|$)/i,
 ]
+
+const SELLERISH_ROLE_PATTERN = /\b(seller|account executive|sales manager)\b/i
+const LOW_SIGNAL_SALES_QUESTION_PATTERN = /\b(would you like to know more|does that make sense|how does that sound|sound good|would that help|would that be useful|what do you think about that|is that something you'd want)\b/i
+const DEEP_TECH_SIGNAL_PATTERN = /\b(tokenization|tokenisation|embedding|embeddings|transformer|attention|next token|inference|latency|throughput|architecture|pipeline|security|api|integration|model|scal(?:e|ing)|hallucinat)\b/i
+const SHALLOW_TECH_PATTERN = /\bhow (does|do|can|to)\b.*\b(work|works|system|platform|agent|pipeline|integration|architecture|api|security|model)\b/i
 
 function cleanText(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
@@ -205,6 +213,37 @@ export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): strin
   const extractedTopics = extractTopics(chunks)
   const usefulTopic = extractedTopics.find((topic) => !LOW_VALUE_TOPIC_WORDS.has(topic.toLowerCase()))
   return usefulTopic ?? null
+}
+
+export function selectActionableQuestion(
+  chunks: TranscriptChunk[],
+  context?: { meetingType?: string; userRole?: string }
+): SignalLine | null {
+  const questions = extractQuestions(chunks)
+  if (questions.length === 0) return null
+
+  const sellerishSalesContext =
+    context?.meetingType === 'Sales Call' &&
+    SELLERISH_ROLE_PATTERN.test(context?.userRole ?? '')
+
+  if (!sellerishSalesContext) return questions[0]
+
+  return questions.find((line) => !LOW_SIGNAL_SALES_QUESTION_PATTERN.test(line.text)) ?? questions[0]
+}
+
+export function isTechnicalQuestion(
+  text: string,
+  context?: { meetingType?: string; userRole?: string }
+): boolean {
+  const lower = text.toLowerCase()
+
+  if (context?.meetingType === 'Sales Call' && SELLERISH_ROLE_PATTERN.test(context?.userRole ?? '')) {
+    if (/\bwhat kind of agents\b|\bwould like to know more about the agents\b|\bwhich workflow\b|\bwhat does it do\b/i.test(lower)) {
+      return false
+    }
+  }
+
+  return DEEP_TECH_SIGNAL_PATTERN.test(lower) || SHALLOW_TECH_PATTERN.test(lower)
 }
 
 export function extractConversationSignals(chunks: TranscriptChunk[]): ConversationSignals {
