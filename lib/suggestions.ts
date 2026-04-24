@@ -13,13 +13,43 @@ const VALID_TYPES = new Set(['question', 'talking_point', 'answer', 'fact_check'
 const OWNER_OR_TIMELINE_PATTERN = /\b(owner|who can|who owns|make the call|deadline|by when|tomorrow|friday|next step|follow up|escalat|workaround|qa|legal|security review|q[1-4])\b/i
 const SUGGESTION_MAX_TOKENS = 650
 
+// Common English words that appear sentence-initial (capitalized) in speech transcripts but
+// are not topic labels. Stopwords do the semantic work; length >= 4 handles the residual
+// 2–3-char words (And, Can, So, Hey, etc.).
+const TOPIC_LABEL_STOPWORDS = new Set([
+  'him', 'his', 'her', 'its', 'our', 'you', 'your', 'they', 'them', 'their',
+  'are', 'ask', 'been', 'being', 'can', 'come', 'could', 'did', 'does', 'done',
+  'give', 'get', 'gets', 'going', 'got', 'had', 'has', 'have', 'help', 'keep',
+  'know', 'let', 'look', 'make', 'may', 'might', 'move', 'must', 'need', 'put',
+  'run', 'said', 'say', 'see', 'set', 'should', 'show', 'take', 'tell', 'think',
+  'try', 'turn', 'used', 'want', 'was', 'went', 'were', 'will', 'with', 'work',
+  'would', 'also', 'away', 'back', 'basically', 'definitely', 'down', 'each',
+  'even', 'every', 'exactly', 'few', 'first', 'good', 'high', 'how', 'just',
+  'kind', 'last', 'like', 'long', 'low', 'many', 'more', 'most', 'much', 'never',
+  'new', 'next', 'not', 'now', 'off', 'often', 'okay', 'only', 'out', 'over',
+  'own', 'quite', 'rather', 'really', 'right', 'same', 'some', 'still', 'such',
+  'sure', 'than', 'then', 'there', 'these', 'those', 'through', 'too', 'under',
+  'until', 'upon', 'usually', 'very', 'well', 'whether', 'while', 'yet',
+  'what', 'when', 'where', 'which', 'who', 'whom', 'whose',
+  'about', 'above', 'across', 'after', 'against', 'ahead', 'along', 'although',
+  'always', 'among', 'another', 'around', 'because', 'before', 'below',
+  'between', 'both', 'but', 'during', 'either', 'enough', 'except', 'following',
+  'for', 'from', 'further', 'hence', 'however', 'including', 'instead', 'into',
+  'nothing', 'once', 'overall', 'perhaps', 'please', 'several', 'simply',
+  'since', 'somehow', 'something', 'sometimes', 'somewhere', 'that', 'therefore',
+  'this', 'though', 'together', 'toward', 'whatever', 'whenever', 'wherever',
+  'within', 'without', 'absolutely', 'actually', 'again', 'already', 'sorry',
+  'thank', 'thanks', 'yeah', 'yes', 'hey', 'hello',
+])
+
 function extractTopicLabels(chunks: TranscriptChunk[]): string[] {
   const combined = chunks.map((chunk) => chunk.text).join(' ')
   const matches = combined.match(/\b(?:[A-Z][a-z]+|[A-Z]{2,})(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}|AI|Speech|Studio|Audio|Labs))*\b/g) ?? []
   const cleaned = matches
     .map((item) => item.trim())
-    .filter((item) => item.length > 2)
-    .filter((item) => !/^I$|^So$|^The$/.test(item))
+    .filter((item) => item.length >= 4)
+    .filter((item) => !TOPIC_LABEL_STOPWORDS.has(item.toLowerCase()))
+    .filter((item) => !TOPIC_LABEL_STOPWORDS.has(item.split(' ').pop()!.toLowerCase()))
 
   return Array.from(new Set(cleaned)).slice(0, 5)
 }
@@ -450,37 +480,63 @@ function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Suggestion[]
 
   if (signals.questions[0]) {
     const question = signals.questions[0]
+    const hasShortlist = comparisonSet.length >= 2
+
     fallbacks.push({
       id: generateId(),
       type: 'answer',
       title: `Answer on ${compactTopic(primaryTopic)}`,
-      detail: `They explicitly asked: "${question.text}" [${question.timestamp}]. Answer by anchoring on ${primaryTopic} and placing it against the shortlist already named in the transcript (${comparisonText}) instead of drifting into a generic product summary.`,
-      say: comparisonSet.length > 1
-        ? `Let me anchor on ${primaryTopic}: compared with ${comparisonSet.slice(1, 3).join(' and ')}, the real question is which one fits your use case best.`
-        : `Let me anchor on ${primaryTopic} first and answer that directly before we widen the comparison.`,
-      whyNow: 'A direct question just landed, so the best move is a focused answer on the exact topic they named.',
-      listenFor: 'A concrete criterion — quality, cost, workflow fit, or integration — so the answer moves beyond a generic overview.',
+      detail: hasShortlist
+        ? `They explicitly asked: "${question.text}" [${question.timestamp}]. Answer by anchoring on ${primaryTopic} and comparing it directly against ${comparisonText} — pick one axis (quality, cost, workflow fit) and stick with it.`
+        : `They explicitly asked: "${question.text}" [${question.timestamp}]. Answer directly on ${primaryTopic}: lead with your sharpest point, support it with one concrete fact, then invite a follow-up.`,
+      say: hasShortlist
+        ? `Let me anchor on ${primaryTopic}: compared with ${comparisonSet.slice(1, 3).join(' and ')}, the key difference is — [your specific point].`
+        : `Here's the direct answer on ${primaryTopic}: [your key point] — and here's why that matters for your use case.`,
+      whyNow: 'A direct question just landed — a focused, specific answer beats a broad overview every time.',
+      listenFor: 'A concrete follow-up criterion (quality, cost, fit) that tells you which angle they actually care about.',
     })
 
-    fallbacks.push({
-      id: generateId(),
-      type: 'question',
-      title: 'Choose the comparison axis',
-      detail: `The transcript already contains a shortlist (${comparisonText}). Ask which dimension they actually care about so you can compare on one axis instead of giving a wandering overview.`,
-      say: `Which matters most here — quality, cost, workflow fit, or how ${primaryTopic} integrates into your existing stack?`,
-      whyNow: 'That one question turns a generic explainer into a useful recommendation.',
-      listenFor: 'A concrete buying/evaluation criterion instead of more tool names.',
-    })
+    if (hasShortlist) {
+      fallbacks.push({
+        id: generateId(),
+        type: 'question',
+        title: 'Choose the comparison axis',
+        detail: `The transcript names ${comparisonText}. Ask which single dimension they care about most so you compare on one axis instead of giving a wandering overview.`,
+        say: `Which matters most here — quality, cost, workflow fit, or how ${primaryTopic} integrates into your existing stack?`,
+        whyNow: 'That one question turns a generic overview into a targeted recommendation.',
+        listenFor: 'A concrete criterion instead of more names or general exploration.',
+      })
 
-    fallbacks.push({
-      id: generateId(),
-      type: 'talking_point',
-      title: 'Use the shortlist directly',
-      detail: `You already named ${comparisonText}${latest ? ` by [${latest.timestamp}]` : ''}. The most useful move is to compare ${primaryTopic} against that shortlist directly, not restart from definitions.`,
-      say: `Since we've already named ${comparisonText}, I'll compare ${primaryTopic} directly against that shortlist instead of describing it in isolation.`,
-      whyNow: 'The conversation has enough context for a sharper comparison, not another intro.',
-      listenFor: 'Whether they want a recommendation, a technical comparison, or a workflow fit.',
-    })
+      fallbacks.push({
+        id: generateId(),
+        type: 'talking_point',
+        title: `Compare ${compactTopic(primaryTopic)} against the shortlist`,
+        detail: `You already named ${comparisonText}${latest ? ` by [${latest.timestamp}]` : ''}. Compare ${primaryTopic} directly against that list on one axis — don't restart from definitions.`,
+        say: `Since we've already named ${comparisonText}, let me compare ${primaryTopic} directly against that shortlist on [quality / cost / fit].`,
+        whyNow: 'The conversation has enough named options for a direct comparison — no need to re-introduce.',
+        listenFor: 'Whether they want a recommendation, a technical comparison, or a workflow fit.',
+      })
+    } else {
+      fallbacks.push({
+        id: generateId(),
+        type: 'question',
+        title: `Anchor the evaluation criteria`,
+        detail: `The question about ${primaryTopic} needs a lens. Ask what they're optimizing for — one answer turns an overview into a targeted recommendation.`,
+        say: `What are you optimizing for with ${primaryTopic} — quality, cost, workflow fit, or a specific use case?`,
+        whyNow: 'A concrete criterion shapes the answer and prevents a wandering overview.',
+        listenFor: 'A specific use case or constraint that lets you give a direct recommendation.',
+      })
+
+      fallbacks.push({
+        id: generateId(),
+        type: 'talking_point',
+        title: `Name the key tradeoff on ${compactTopic(primaryTopic)}`,
+        detail: `Move beyond description to the real tradeoff. The most useful thing you can say about ${primaryTopic} is what you'd have to give up to use it — that's what drives decisions.`,
+        say: `The key tradeoff with ${primaryTopic} is [quality vs. cost / flexibility vs. reliability / ease vs. control] — which side matters more for you?`,
+        whyNow: 'Naming the tradeoff forces specificity and usually gets a faster, more useful reply than a general pitch.',
+        listenFor: 'Which side of the tradeoff they land on — that shapes the rest of the recommendation.',
+      })
+    }
 
     return sanitizeSuggestions(fallbacks)
   }

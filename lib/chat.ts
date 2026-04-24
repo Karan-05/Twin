@@ -49,16 +49,95 @@ function buildLocalDetailedFallback(
 ): string {
   const signals = extractConversationSignals(transcript.slice(-8))
   const latest = transcript[transcript.length - 1]
-  const relevant = signals.questions[0] || signals.risks[0] || signals.commitments[0] || latest
+  const openQuestion = signals.questions[0]
+  const riskyItem = signals.numericClaims[0] || signals.risks[0]
+  const commitment = signals.commitments[0]
+  const goalClause = meetingContext.goal ? `**${meetingContext.goal}**` : 'your stated goal'
 
-  return [
-    `**Evidence:** ${relevant ? `"${relevant.text}" [${relevant.timestamp}]` : 'Thin transcript — using recent context.'}`,
-    `**In short:** Use **${suggestionTitle}** as your next move and keep it concrete.`,
-    `- Suggestion type: **${suggestionType}**`,
-    `- Why this helps now: ${suggestionDetail}`,
-    latest ? `- Most recent anchor: "${latest.text}" [${latest.timestamp}]` : '- Most recent anchor: transcript still thin.',
-    meetingContext.goal ? `- [ ] Next step to lock: reconnect this to **${meetingContext.goal}** before the call moves on.` : '- [ ] Next step to lock: name the owner, action, and timing before the call moves on.',
-  ].join('\n')
+  const anchor =
+    suggestionType === 'answer' || suggestionType === 'question' ? openQuestion ?? latest
+    : suggestionType === 'fact_check' ? riskyItem ?? latest
+    : suggestionType === 'clarification' ? commitment ?? riskyItem ?? latest
+    : latest
+
+  const evidenceLine = anchor
+    ? `**Evidence:** "${anchor.text}" [${anchor.timestamp}]`
+    : '**Evidence:** Thin transcript — using suggestion framing.'
+
+  let inShort: string
+  let bullets: string[]
+
+  switch (suggestionType) {
+    case 'answer':
+      inShort = 'Give a direct, high-signal answer — not a summary of the question.'
+      bullets = [
+        openQuestion
+          ? `- Open question: "${openQuestion.text}" [${openQuestion.timestamp}]`
+          : `- Anchor on **${suggestionTitle}** — your most concrete fact or credential on this topic.`,
+        '- Structure: **[one clear claim]** → **[one supporting fact or example]** → **[concrete implication]**',
+        `> "Say: The key thing here is [your specific point] — and that means [concrete implication]."`,
+        `- [ ] Next step to lock: connect this answer to ${goalClause} with a named owner and timing.`,
+      ]
+      break
+
+    case 'question':
+      inShort = 'Ask this now — say it cleanly and wait. Don\'t explain the question.'
+      bullets = [
+        `- Say: **${suggestionTitle}** — in one direct sentence ending with a question mark.`,
+        `> "Say: [Ask it directly — what you actually want to know, nothing more]."`,
+        '- A strong reply: specific and opinionated — gives you something to act on.',
+        '- A weak reply: vague or deflecting — push once: "Can you be more specific?"',
+        openQuestion && openQuestion.text !== suggestionTitle
+          ? `- Relates to the open question: "${openQuestion.text}" [${openQuestion.timestamp}]`
+          : `- [ ] Next step: what does the answer change about ${goalClause}?`,
+      ]
+      break
+
+    case 'fact_check':
+      inShort = 'Challenge this claim politely but immediately — before the room anchors on it.'
+      bullets = [
+        riskyItem
+          ? `- Claim to challenge: "${riskyItem.text}" [${riskyItem.timestamp}]`
+          : '- Name the exact claim, then ask for the source or assumption behind it.',
+        `> "Say: That's an important data point — what's the assumption or source behind it?"`,
+        '- A strong reply: cites a real source or baseline.',
+        '- A weak reply: signals the number is softer than it sounds — push once more.',
+        '- [ ] Next step: if the number holds, build on it. If not, recalibrate the plan around it.',
+      ]
+      break
+
+    case 'clarification':
+      inShort = 'Get this defined before the conversation moves on — vagueness here costs time later.'
+      bullets = [
+        `- What's still undefined: **${suggestionTitle}**`,
+        `> "Say: Before we move on — can we agree on [the specific undefined thing] so there's no confusion later?"`,
+        '- Downstream consequence: without a clear owner, criterion, or decision rule, this will resurface and cost more time.',
+        commitment
+          ? `- Existing commitment to pin down: "${commitment.text}" [${commitment.timestamp}]`
+          : `- [ ] Next step: name the owner + the exact decision needed + a hard deadline.`,
+      ]
+      break
+
+    case 'talking_point':
+      inShort = 'Contribute this perspective now to shift the conversation toward a concrete decision.'
+      bullets = [
+        latest ? `- Build on: "${latest.text}" [${latest.timestamp}]` : '- Lead with a concrete fact or credential, not a general opinion.',
+        '- Frame: **[your key point]** → **[why it matters right now]** → **[what action it implies]**',
+        `> "Say: The key thing to add here is [your insight] — which means we should [concrete next step]."`,
+        `- [ ] Next step: connect this to ${goalClause} and propose one concrete action before moving on.`,
+      ]
+      break
+
+    default:
+      inShort = `Act on **${suggestionTitle}** — your next move.`
+      bullets = [
+        latest ? `- Most recent context: "${latest.text}" [${latest.timestamp}]` : '- Use the current discussion as your anchor.',
+        `- ${suggestionDetail.slice(0, 130)}${suggestionDetail.length > 130 ? '…' : ''}`,
+        `- [ ] Next step: name the owner, action, and timing before moving on.`,
+      ]
+  }
+
+  return [evidenceLine, '', `**In short:** ${inShort}`, ...bullets].join('\n')
 }
 
 
@@ -209,7 +288,8 @@ export async function* streamDetailedAnswer(
       temperature: 0.25,
       max_tokens: DETAIL_MAX_TOKENS,
     }))
-  } catch {
+  } catch (err) {
+    console.error('[streamDetailedAnswer] Groq failed, using local fallback:', err)
     yield buildLocalDetailedFallback(suggestionTitle, suggestionType, suggestionDetail, transcript, meetingContext)
     return
   }
