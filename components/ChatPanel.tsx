@@ -304,6 +304,8 @@ export default function ChatPanel() {
             suggestion.type,
             suggestion.detail,
             suggestion.say,
+            suggestion.whyNow,
+            suggestion.listenFor,
             transcript,
             apiKey,
             settings,
@@ -336,7 +338,10 @@ export default function ChatPanel() {
   useEffect(() => {
     const handler = (e: Event) => {
       const suggestion = (e as CustomEvent<Suggestion>).detail
-      sendMessage(suggestion.title, true, suggestion)
+      const clickedPrompt = suggestion.say
+        ? `Expand: ${suggestion.title}\n${suggestion.say}`
+        : `Expand: ${suggestion.title}\n${suggestion.detail}`
+      sendMessage(clickedPrompt, true, suggestion)
     }
     window.addEventListener('suggestion-clicked', handler)
     return () => window.removeEventListener('suggestion-clicked', handler)

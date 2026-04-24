@@ -202,6 +202,64 @@ assert(
 )
 
 // ---------------------------------------------------------------------------
+// Scenario 8: Product knowledge question — broad topic, not hardcoded
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 8] Product knowledge question — stays product-level')
+
+const macbookChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:08:00', text: 'We are selling the MacBook Air to developers and students who want a lightweight laptop.' },
+  { id: '2', timestamp: '00:08:12', text: 'What are the M1 configurations and is macOS good for coding?' },
+]
+
+const macbookContext: MeetingContext = {
+  meetingType: 'Sales Call',
+  userRole: 'Seller',
+  goal: 'Answer product questions clearly and connect them to buyer fit',
+}
+
+const macbookSuggestions = buildFallbackSuggestions(macbookChunks, macbookContext)
+
+assert(macbookSuggestions.length === 3, 'returns 3 suggestions')
+assert(
+  macbookSuggestions.some((s) => /macbook|m1/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `keeps the actual product/topic in view`
+)
+assert(
+  !macbookSuggestions.some((s) => /latency budget|throughput|consistency requirements|architecture/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `does not force a product question into a systems-architecture answer`
+)
+assert(
+  macbookSuggestions.some((s) => /workflow|use case|trade-off|product|coding/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `gives a product-knowledge style answer frame instead of a coaching placeholder`
+)
+
+// ---------------------------------------------------------------------------
+// Scenario 9: General knowledge question — direct answer framing
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 9] General knowledge question — answer-first framing')
+
+const geographyChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:09:00', text: 'Where is Los Angeles?' },
+  { id: '2', timestamp: '00:09:06', text: 'I want a clean direct answer before we move on.' },
+]
+
+const geographySuggestions = buildFallbackSuggestions(geographyChunks)
+
+assert(geographySuggestions.length === 3, 'returns 3 suggestions')
+assert(
+  geographySuggestions.some((s) => /los angeles/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `keeps the actual location topic instead of collapsing to a generic label`
+)
+assert(
+  geographySuggestions.some((s) => s.type === 'answer'),
+  `includes a direct answer suggestion for a factual question`
+)
+assert(
+  !geographySuggestions.some((s) => /latency|architecture|pipeline|next step|owner/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `does not turn a factual location question into architecture or meeting-process advice`
+)
+
+// ---------------------------------------------------------------------------
 // Results
 // ---------------------------------------------------------------------------
 console.log(`\n${'─'.repeat(50)}`)

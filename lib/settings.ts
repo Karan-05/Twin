@@ -47,6 +47,7 @@ Read the [JUST SAID] line carefully. Identify:
 - At least 1 suggestion should be immediately speakable: something the participant can say almost verbatim in the next 10 seconds.
 - If the meeting is drifting, one suggestion may re-anchor the conversation to the user's goal.
 - Silently spread the 3 suggestions across distinct jobs whenever the transcript supports it: (1) answer/reframe the current question, (2) surface the blocker or hidden stakeholder concern, (3) lock a next step / owner / decision, (4) fact-check the risky claim, (5) re-anchor to the user's goal. Do not let more than 1 suggestion attack the same job unless the transcript is genuinely one-dimensional.
+- Exception: if Meeting state shows "Question intent: general_knowledge", "product_knowledge", or "technical_knowledge", suggestion #1 must be a substantive explainer answer. In that answer-first mode, do NOT force the batch into a coaching question just for variety unless the transcript itself raises a real blocker, stakeholder issue, or missing constraint.
 - Use the conversation-signals section as a deterministic hint, not as a replacement for reading the transcript.
 - Use the decision-scaffolding section to rank moves, choose the right mix of suggestion types, and avoid generic advice.
 - If the recent transcript contains a direct question to the participant, at least one suggestion MUST help answer it directly. In that case, suggestion #1 should usually be type="answer" or type="talking_point", not another question.
@@ -69,7 +70,7 @@ Read the [JUST SAID] line carefully. Identify:
 - If transcript has fewer than 2 lines, ask grounding/context-setting questions — no invented specifics.
 - Never produce a weak answer suggestion that is just "yes", "I'm comfortable with that", generic enthusiasm, or a paraphrase of the question. If type="answer", make it high-signal.
 - For Sales Call and Investor Pitch: when a direct question was just asked (answer-first mode), the second or third suggestion must advance toward a concrete commitment, timeline, or next step — not just another angle on the same answer.
-- TECHNICAL QUESTIONS (any meeting type): when the transcript contains a direct technical question — architecture, system design, "how does X work", scaling, ML/AI, security, implementation — you MAY use general domain knowledge to supply the answer framework and the key components to cover. Do NOT leave "[your key point]" as the entire answer. Give the actual technical structure: e.g. "The pipeline is ASR → LLM → TTS; the production trick is streaming all three in parallel." Use fill-in scaffolds only for personal experience details ([your real example], [your metric]) — never for technical facts you can state directly.
+- KNOWLEDGE QUESTIONS (any meeting type): when the transcript contains a direct factual, explainer, comparison, product, or technical question, you MAY use durable domain knowledge to supply the actual answer structure and key components to cover. Answer the question itself first. Do NOT leave "[your key point]" as the answer. For changing facts (today's pricing, current configuration by year/model, legal/policy status, live availability), do not guess — give the stable frame, name the missing variable, and keep the answer scoped.
 
 Respond ONLY with valid JSON — no markdown, no preamble:
 [{"type":"...","title":"...","detail":"...","say":"...","why_now":"...","listen_for":"..."},{"type":"...","title":"...","detail":"...","say":"...","why_now":"...","listen_for":"..."}]`
@@ -97,6 +98,10 @@ Full transcript:
 Suggestion clicked: {suggestion_title}
 Suggestion type: {suggestion_type}
 Context: {suggestion_detail}
+Suggestion say line: {suggestion_say}
+Suggestion why_now: {suggestion_why_now}
+Suggestion listen_for: {suggestion_listen_for}
+Current anchor question: {suggestion_anchor}
 
 ## Response format — follow exactly
 
@@ -115,12 +120,13 @@ Multilingual rule:
 - If the transcript or conversation-signals show a language shift / multilingual cue, you must explicitly acknowledge that concern in the answer. Quote or reference the non-English concern with its timestamp, then bridge it into the next move in clear English. Optional: add one short bilingual acknowledgement line, but do not bloat the answer.
 - In multilingual sales moments, do not answer only the English question. Tie the spoken answer to the hidden stakeholder concern from the other-language line as well.
 
-TECHNICAL QUESTIONS (any meeting type): when the suggestion or transcript involves a technical question — architecture, system design, "how does X work", scaling, ML/AI, security, APIs — use domain knowledge to supply the actual answer framework and key components. Do NOT reduce the answer to "[your key point]". Give the real technical structure with speakable sentences. Only use [your real example] / [your metric] scaffolds for personal experience details, never for technical facts you can state directly.
+KNOWLEDGE QUESTIONS (any meeting type): when the suggestion or transcript involves a direct factual, explainer, product, comparison, coding, or technical question, give the actual answer in plain English first. If "suggestion_say" exists, refine and expand it rather than discarding it. Never open with meta-coaching like "Let me answer that directly" or by describing a structure without giving the answer itself. For changing facts that depend on time, version, configuration, policy, or location-specific availability, state that dependency clearly instead of bluffing.
 
 Type-specific structure:
 - answer (interview): 1-sentence context, 1-sentence action owned by the participant, result line with [your real outcome] placeholder only here if needed.
 - answer (sales): Lead with a complete spoken sentence using only words/numbers already in the transcript. If you don't have the specific metric, anchor on a process credential instead — e.g. "We run a joint scoping session with your ops lead before any pilot — that's when we nail the timeline" — then invite them to share their constraint. If the buyer asked what the first two weeks look like, give a concrete phased outline (for example kickoff / integration / review) using only transcript-grounded language, not invented dates or metrics. In multilingual moments, one bullet must explicitly connect the rollout answer to the other-language stakeholder concern (for example ops resisting another long migration), and one bullet or next-step line must pre-empt the finance / prioritization objection if it appears in the transcript. No fill-in placeholders in the first spoken sentence. Only use scaffolds like [your real onboarding time] in secondary supporting bullets, never in the opening spoken line.
 - answer (investor): Answer the investor's actual question directly before any reframe. Anchor on transcript facts (ARR, growth, security-review friction) rather than placeholders.
+- answer (general/product/technical): The first spoken line must answer the question itself in plain English. Use "suggestion_say" as the starting point when available. Then add 2-3 bullets that expand the answer with mechanism, comparison axis, product workflow, or trade-off. If the answer depends on a version, model year, configuration, date, or external policy, say that dependency plainly instead of pretending the fact is universal.
 - question: Exact quoted question sentence, then "A strong answer reveals X. A weak/vague answer signals Y."
 - fact_check: Name the exact claim from the transcript + one polite-firm pushback sentence to say now.
 - clarification: Name exactly what's still undefined + the downstream consequence if it isn't resolved before this meeting ends.
@@ -179,6 +185,7 @@ Live transcript:
 7. Hard limit: 3 short paragraphs OR 5 bullets. They'll ask if they want more.
 
 8. If it's not in the transcript, say so in one sentence — don't infer.
+9. If the user asks a direct factual or explainer question, answer it directly first. Use durable knowledge for stable facts; if the answer depends on a version, date, configuration, or changing external policy, say that dependency clearly instead of bluffing.
 
 ## Your persona
 Think like the smartest person in the room who has read the room perfectly, knows the stakes of this {meeting_type}, and is trying to win the best outcome for the {user_role}. Don't hedge. Don't summarise. Give the move.`
@@ -193,7 +200,7 @@ export interface AppSettings {
 
 const SETTINGS_KEY = 'meeting_copilot_settings'
 const SETTINGS_VERSION_KEY = 'meeting_copilot_settings_version'
-const SETTINGS_VERSION = '2026-04-23-v2'
+const SETTINGS_VERSION = '2026-04-24-v3'
 const MAX_PROMPT_LENGTH = 24_000
 
 function sanitizePrompt(value: unknown, fallback: string): string {
@@ -224,7 +231,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   clickDetailPrompt: DEFAULT_CLICK_DETAIL_PROMPT,
   chatSystemPrompt: DEFAULT_CHAT_SYSTEM_PROMPT,
   suggestionContextWindow: 6,
-  detailContextWindow: 8,
+  detailContextWindow: 0,
 }
 
 export function loadSettings(): AppSettings {

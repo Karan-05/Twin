@@ -2,7 +2,16 @@ import Groq from 'groq-sdk'
 import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions'
 import type { Message, TranscriptChunk, MeetingContext } from './store'
 import type { AppSettings } from './settings'
-import { buildConversationSignalsSection, extractConversationSignals, extractPrimaryTopic, selectActionableQuestion } from './contextSignals'
+import type { QuestionCategory } from './contextSignals'
+import {
+  buildConversationSignalsSection,
+  extractConversationSignals,
+  extractPrimaryTopic,
+  inferQuestionCategory,
+  inferQuestionIntent,
+  isTechnicalQuestion,
+  selectActionableQuestion,
+} from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import { buildMeetingStateSection, deriveMeetingState } from './meetingState'
 import { withGroqTextBudget } from './groqBudget'
@@ -12,19 +21,6 @@ const CHAT_CONTEXT_CHAR_BUDGET = 4200
 const DETAIL_CONTEXT_CHAR_BUDGET = 3600
 const CHAT_MAX_TOKENS = 700
 const DETAIL_MAX_TOKENS = 580
-
-type QuestionCategory = 'definition' | 'mechanism' | 'comparison' | 'reason' | 'tradeoff' | 'implementation' | 'general'
-
-function inferQuestionCategory(text: string): QuestionCategory {
-  const lower = text.toLowerCase()
-  if (/\bwhat is\b|\bwhat's\b|\bdefine\b|\bmeaning of\b/.test(lower)) return 'definition'
-  if (/\bhow does\b|\bhow do\b|\bhow can\b|\bhow to\b|\bworks?\b/.test(lower)) return 'mechanism'
-  if (/\bcompare\b|\bversus\b|\bvs\b|\bdifference\b|\bbetter than\b/.test(lower)) return 'comparison'
-  if (/\bwhy\b|\bimportance\b|\bmatter\b/.test(lower)) return 'reason'
-  if (/\btradeoff\b|\btrade-off\b|\bpros and cons\b|\bdownside\b|\bupside\b/.test(lower)) return 'tradeoff'
-  if (/\bimplement\b|\bintegration\b|\brollout\b|\bonboarding\b|\bfirst two weeks\b/.test(lower)) return 'implementation'
-  return 'general'
-}
 
 function isSellerishSalesContext(meetingContext: MeetingContext): boolean {
   return meetingContext.meetingType === 'Sales Call' && /\b(seller|account executive|sales manager)\b/i.test(meetingContext.userRole || '')
@@ -39,6 +35,31 @@ function inferSalesWorkflowSummary(transcript: TranscriptChunk[]): string {
   return 'customer conversations'
 }
 
+function buildKnowledgeSupportLine(topic: string, category: QuestionCategory): string {
+  switch (category) {
+    case 'location':
+      return `- Start with the location itself on **${topic}**, then add why that location matters in this discussion.`
+    case 'person':
+      return `- Start with who **${topic}** is, then the role or context that makes them relevant here.`
+    case 'timing':
+      return `- Start with the timing itself on **${topic}**, then say what that timing changes in practice.`
+    case 'definition':
+      return `- Start with what **${topic}** is, then the practical way to think about it, then why it matters here.`
+    case 'mechanism':
+      return `- Walk it in order: input, processing, output, then the main constraint or bottleneck.`
+    case 'comparison':
+      return `- Compare **${topic}** on one axis first — quality, cost, speed, risk, or fit — before adding nuance.`
+    case 'reason':
+      return `- Focus on why **${topic}** matters, what changes because of it, and what decision it should influence.`
+    case 'tradeoff':
+      return `- Name the main trade-off on **${topic}**, then say which side matters more here.`
+    case 'implementation':
+      return `- Walk through the rollout: what happens first, where friction shows up, and what has to be true for it to work smoothly.`
+    default:
+      return `- Give the direct answer on **${topic}** first, then one implication that matters for this meeting.`
+  }
+}
+
 function buildLocalChatFallback(
   transcript: TranscriptChunk[],
   meetingContext: MeetingContext,
@@ -49,6 +70,7 @@ function buildLocalChatFallback(
   const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${userMessage}`) || signals.topics.slice(0, 2).join(' / ') || meetingContext.goal || 'current topic'
   const question = selectActionableQuestion(transcript.slice(-8), meetingContext)
   const category = inferQuestionCategory(question?.text ?? userMessage)
+  const questionIntent = inferQuestionIntent(question?.text ?? userMessage, meetingContext)
   const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${userMessage} ${question?.text ?? ''}`)
 
   if (llmLike) {
@@ -61,6 +83,17 @@ function buildLocalChatFallback(
       '- Decoding picks the next token repeatedly until the model reaches a stopping point.',
       '> "Say: An LLM tokenizes the prompt, maps tokens to embeddings, runs attention over the sequence, and predicts the next token repeatedly until the answer is complete."',
       '- Groq is temporarily rate-limited, so this is a local technical fallback.',
+    ].join('\n')
+  }
+
+  if (questionIntent !== 'meeting_coaching') {
+    return [
+      '**In short:** Answer the knowledge question on **' + topic + '** directly first — then bridge it back to the meeting.',
+      question ? `- Open question: "${question.text}" [${question.timestamp}]` : `- Topic: **${topic}**`,
+      buildKnowledgeSupportLine(topic, category),
+      '- If the fact depends on a version, date, configuration, or policy, state that variable explicitly instead of bluffing.',
+      `- Your question: "${userMessage}"`,
+      '- Groq is temporarily rate-limited, so this is a local answer-first fallback rather than a full model answer.',
     ].join('\n')
   }
 
@@ -117,10 +150,12 @@ function buildLocalDetailedFallback(
   const goalClause = meetingContext.goal ? `**${meetingContext.goal}**` : 'your stated goal'
   const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${suggestionTitle}`) || 'current topic'
   const category = inferQuestionCategory(openQuestion?.text ?? suggestionTitle)
+  const questionIntent = inferQuestionIntent(openQuestion?.text ?? suggestionTitle, meetingContext)
+  const technicalKnowledge =
+    questionIntent === 'technical_knowledge' ||
+    isTechnicalQuestion(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`, meetingContext)
   const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`)
-  const salesVoiceAgents =
-    isSellerishSalesContext(meetingContext) &&
-    /\bvoice ai agents?\b|\bvoice agents?\b|\bagents?\b/.test(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`)
+  const productKnowledge = questionIntent === 'product_knowledge'
   const workflowSummary = inferSalesWorkflowSummary(transcript)
 
   const anchor =
@@ -147,16 +182,45 @@ function buildLocalDetailedFallback(
     ].join('\n')
   }
 
-  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && salesVoiceAgents) {
+  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && productKnowledge) {
     return [
       evidenceLine,
       '',
-      '**In short:** Define the agent category clearly, tie it to one workflow, then ask which workflow they want first.',
-      `- They are not asking for architecture yet. They are asking what kind of **${topic}** you actually mean in business terms.`,
-      `- Anchor on the workflow already in the transcript: **${workflowSummary}**, with **24/7** availability and lower cost than a purely human calling workflow [${latest?.timestamp ?? 'LIVE'}].`,
-      `- Keep the answer concrete: category first, use case second, business value third. Do not drift into generic AI language.`,
-      `> "Say: We are mainly talking about ${workflowSummary} agents that stay available 24/7, handle repetitive customer conversations, and cost less than a purely human team for that workflow. The real question is which workflow you would want to automate first."`,
-      `- [ ] Next step to lock: ask which workflow matters most for them first, then tailor the rest of the pitch to that one path.`,
+      `**In short:** Answer **${topic}** as a product or category first — then tie it to a concrete workflow or buyer outcome.`,
+      `- They are asking what **${topic}** is in practical terms, not for meeting coaching. Start with the category, the workflow it fits into, and the trade-off or buyer outcome that matters.`,
+      `- Anchor on the workflow signal already in the transcript: **${workflowSummary}**${latest ? ` [${latest.timestamp}]` : ''}.`,
+      suggestionSay
+        ? `> "Say: ${suggestionSay}"`
+        : `> "Say: The useful way to think about ${topic} is the workflow it handles, the team it helps, and the outcome it improves — then we can narrow to the use case that matters most for you."`,
+      `- [ ] Next step to lock: pick the workflow or buyer outcome that matters most, then tailor the rest of the answer to that.`,
+    ].join('\n')
+  }
+
+  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && technicalKnowledge) {
+    return [
+      evidenceLine,
+      '',
+      `**In short:** Answer the technical question on **${topic}** directly — architecture or mechanism first, trade-off second.`,
+      `- Start with the actual system path: input, core processing, output, then the bottleneck or constraint that shapes the design.`,
+      suggestionSay
+        ? `> "Say: ${suggestionSay}"`
+        : `> "Say: The clearest way to explain ${topic} is the runtime path first, then the trade-off or bottleneck that changes the design in production."`,
+      `- If the transcript lacks the scale, version, or constraints, name that missing variable explicitly rather than guessing.`,
+      `- [ ] Next step to lock: ask whether they want the deeper component breakdown, the trade-offs, or the implementation path.`,
+    ].join('\n')
+  }
+
+  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && questionIntent === 'general_knowledge') {
+    return [
+      evidenceLine,
+      '',
+      `**In short:** Answer the question on **${topic}** itself first — then bridge it back to why it matters here.`,
+      buildKnowledgeSupportLine(topic, category),
+      suggestionSay
+        ? `> "Say: ${suggestionSay}"`
+        : `> "Say: The direct answer on ${topic} comes first — then I can connect it to the implication that matters most here."`,
+      '- If the answer depends on a version, date, configuration, or changing external fact, say that dependency clearly instead of bluffing.',
+      `- [ ] Next step to lock: confirm whether they want more depth, a comparison, or the practical implication next.`,
     ].join('\n')
   }
 
@@ -366,6 +430,8 @@ export async function* streamDetailedAnswer(
   suggestionType: string,
   suggestionDetail: string,
   suggestionSay: string | undefined,
+  suggestionWhyNow: string | undefined,
+  suggestionListenFor: string | undefined,
   transcript: TranscriptChunk[],
   apiKey: string,
   settings: AppSettings,
@@ -373,17 +439,28 @@ export async function* streamDetailedAnswer(
 ): AsyncGenerator<string> {
   const detailChunks = settings.detailContextWindow > 0 ? transcript.slice(-settings.detailContextWindow) : transcript
   const fullContext = buildTranscriptContext(transcript, settings.detailContextWindow, DETAIL_CONTEXT_CHAR_BUDGET)
+  const anchorQuestion = selectActionableQuestion(transcript, meetingContext)
 
   const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true })
 
   const prompt = buildPrompt(
     settings.clickDetailPrompt
       .replace('{suggestion_title}', suggestionTitle)
-      .replace('{suggestion_detail}', suggestionDetail),
+      .replace('{suggestion_detail}', suggestionDetail)
+      .replace('{suggestion_say}', suggestionSay ?? 'none')
+      .replace('{suggestion_why_now}', suggestionWhyNow ?? 'none')
+      .replace('{suggestion_listen_for}', suggestionListenFor ?? 'none')
+      .replace('{suggestion_anchor}', anchorQuestion ? `"${anchorQuestion.text}" [${anchorQuestion.timestamp}]` : 'none'),
     fullContext,
     detailChunks,
     meetingContext,
-    { suggestion_type: suggestionType }
+    {
+      suggestion_type: suggestionType,
+      suggestion_say: suggestionSay ?? 'none',
+      suggestion_why_now: suggestionWhyNow ?? 'none',
+      suggestion_listen_for: suggestionListenFor ?? 'none',
+      suggestion_anchor: anchorQuestion ? `"${anchorQuestion.text}" [${anchorQuestion.timestamp}]` : 'none',
+    }
   )
 
   const promptText = `${RESPONSE_GUARDRAILS}\n\n${prompt}`

@@ -14,6 +14,24 @@ export interface ConversationSignals {
   multilingualCues: SignalLine[]
 }
 
+export type QuestionCategory =
+  | 'definition'
+  | 'mechanism'
+  | 'comparison'
+  | 'reason'
+  | 'tradeoff'
+  | 'implementation'
+  | 'location'
+  | 'person'
+  | 'timing'
+  | 'general'
+
+export type QuestionIntent =
+  | 'meeting_coaching'
+  | 'general_knowledge'
+  | 'product_knowledge'
+  | 'technical_knowledge'
+
 const QUESTION_PREFIXES = [
   'what', 'why', 'how', 'when', 'where', 'who', 'which', 'would', 'could', 'should', 'can', 'do',
   'does', 'did', 'is', 'are', 'was', 'were', 'will', 'have', 'has', 'had'
@@ -77,6 +95,9 @@ const SELLERISH_ROLE_PATTERN = /\b(seller|account executive|sales manager)\b/i
 const LOW_SIGNAL_SALES_QUESTION_PATTERN = /\b(would you like to know more|does that make sense|how does that sound|sound good|would that help|would that be useful|what do you think about that|is that something you'd want)\b/i
 const DEEP_TECH_SIGNAL_PATTERN = /\b(tokenization|tokenisation|embedding|embeddings|transformer|attention|next token|inference|latency|throughput|architecture|pipeline|security|api|integration|model|scal(?:e|ing)|hallucinat)\b/i
 const SHALLOW_TECH_PATTERN = /\bhow (does|do|can|to)\b.*\b(work|works|system|platform|agent|pipeline|integration|architecture|api|security|model)\b/i
+const DIRECT_KNOWLEDGE_PATTERN = /\b(what is|what's|where is|where are|who is|who are|when is|when did|why does|why do|how does|how do|how can|how to|define|explain|tell me about|walk me through|difference between|compare|versus|vs|meaning of)\b/i
+const MEETING_CONTROL_PATTERN = /\b(who owns|owner|by when|next step|before we wrap|can you be more specific|what should we do|should we|do we want to|what do you think|what would make|how should we think about|would you like to know more|does that make sense|sound good|what workflow matters|who else will weigh in)\b/i
+const PRODUCT_KNOWLEDGE_PATTERN = /\b(what kind of|what does .* do|who is .* for|how is .* used|use case|workflow|configuration|configurations|pricing|plan|tier|sku|edition|package|feature set|capabilities)\b/i
 
 function cleanText(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
@@ -235,15 +256,57 @@ export function isTechnicalQuestion(
   text: string,
   context?: { meetingType?: string; userRole?: string }
 ): boolean {
-  const lower = text.toLowerCase()
+  return inferQuestionIntent(text, context) === 'technical_knowledge'
+}
 
-  if (context?.meetingType === 'Sales Call' && SELLERISH_ROLE_PATTERN.test(context?.userRole ?? '')) {
-    if (/\bwhat kind of agents\b|\bwould like to know more about the agents\b|\bwhich workflow\b|\bwhat does it do\b/i.test(lower)) {
-      return false
-    }
+export function inferQuestionCategory(text: string): QuestionCategory {
+  const lower = text.toLowerCase()
+  if (/\bwhere is\b|\bwhere are\b|\blocated\b|\blocation\b/.test(lower)) return 'location'
+  if (/\bwho is\b|\bwho are\b|\bwhose\b/.test(lower)) return 'person'
+  if (/\bwhen is\b|\bwhen did\b|\bwhat year\b|\bwhat time\b|\bwhen does\b/.test(lower)) return 'timing'
+  if (/\bwhat is\b|\bwhat's\b|\bdefine\b|\bmeaning of\b/.test(lower)) return 'definition'
+  if (/\bhow does\b|\bhow do\b|\bhow can\b|\bhow to\b|\bworks?\b/.test(lower)) return 'mechanism'
+  if (/\bcompare\b|\bversus\b|\bvs\b|\bdifference\b|\bbetter than\b/.test(lower)) return 'comparison'
+  if (/\bwhy\b|\bimportance\b|\bmatter\b/.test(lower)) return 'reason'
+  if (/\btradeoff\b|\btrade-off\b|\bpros and cons\b|\bdownside\b|\bupside\b/.test(lower)) return 'tradeoff'
+  if (/\bimplement\b|\bintegration\b|\brollout\b|\bonboarding\b|\bfirst two weeks\b/.test(lower)) return 'implementation'
+  return 'general'
+}
+
+export function inferQuestionIntent(
+  text: string,
+  context?: { meetingType?: string; userRole?: string }
+): QuestionIntent {
+  const lower = cleanText(text).toLowerCase()
+  const sellerishSalesContext =
+    context?.meetingType === 'Sales Call' &&
+    SELLERISH_ROLE_PATTERN.test(context?.userRole ?? '')
+
+  if (LOW_SIGNAL_SALES_QUESTION_PATTERN.test(lower)) return 'meeting_coaching'
+  if (MEETING_CONTROL_PATTERN.test(lower)) return 'meeting_coaching'
+
+  if (sellerishSalesContext && PRODUCT_KNOWLEDGE_PATTERN.test(lower) && !DEEP_TECH_SIGNAL_PATTERN.test(lower)) {
+    return 'product_knowledge'
   }
 
-  return DEEP_TECH_SIGNAL_PATTERN.test(lower) || SHALLOW_TECH_PATTERN.test(lower)
+  if (DEEP_TECH_SIGNAL_PATTERN.test(lower) || SHALLOW_TECH_PATTERN.test(lower)) {
+    if (sellerishSalesContext && /\bwhat kind of\b|\bwhat does .* do\b|\bworkflow\b/i.test(lower)) {
+      return 'product_knowledge'
+    }
+    return 'technical_knowledge'
+  }
+
+  if (sellerishSalesContext && DIRECT_KNOWLEDGE_PATTERN.test(lower)) {
+    return 'product_knowledge'
+  }
+
+  if (DIRECT_KNOWLEDGE_PATTERN.test(lower)) return 'general_knowledge'
+
+  if (QUESTION_PREFIXES.some((prefix) => lower.startsWith(`${prefix} `))) {
+    return sellerishSalesContext ? 'product_knowledge' : 'general_knowledge'
+  }
+
+  return 'meeting_coaching'
 }
 
 export function extractConversationSignals(chunks: TranscriptChunk[]): ConversationSignals {

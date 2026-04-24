@@ -1,11 +1,13 @@
 import type { MeetingContext, TranscriptChunk } from './store'
-import { extractConversationSignals, selectActionableQuestion } from './contextSignals'
+import type { QuestionIntent } from './contextSignals'
+import { extractConversationSignals, inferQuestionIntent, selectActionableQuestion } from './contextSignals'
 
 export type SuggestionTriggerReason = 'question' | 'risky_claim' | 'blocker' | 'deadline' | 'loop'
 
 export interface MeetingState {
   mode: 'answer' | 'unblock' | 'decide' | 'probe' | 'close'
   currentQuestion: string | null
+  questionIntent: QuestionIntent | null
   blocker: string | null
   riskyClaim: string | null
   decisionFocus: string | null
@@ -19,6 +21,7 @@ export interface MeetingState {
 const EMPTY_STATE: MeetingState = {
   mode: 'probe',
   currentQuestion: null,
+  questionIntent: null,
   blocker: null,
   riskyClaim: null,
   decisionFocus: null,
@@ -77,7 +80,9 @@ export function deriveMeetingState(
   if (chunks.length === 0) return EMPTY_STATE
 
   const signals = extractConversationSignals(chunks)
-  const currentQuestion = selectActionableQuestion(chunks, meetingContext)?.text ?? null
+  const actionableQuestion = selectActionableQuestion(chunks, meetingContext)
+  const currentQuestion = actionableQuestion?.text ?? null
+  const questionIntent = actionableQuestion ? inferQuestionIntent(actionableQuestion.text, meetingContext) : null
   const blocker = signals.risks[0]?.text ?? null
   const riskyClaim = signals.numericClaims[0]?.text ?? null
   const deadlineSignal = signals.commitments.find((line) => DEADLINE_PATTERN.test(line.text))?.text
@@ -103,6 +108,7 @@ export function deriveMeetingState(
   return {
     mode,
     currentQuestion,
+    questionIntent,
     blocker,
     riskyClaim,
     decisionFocus,
@@ -119,6 +125,7 @@ export function buildMeetingStateSection(meetingState: MeetingState): string {
     '## Meeting state',
     `Mode: ${meetingState.mode}`,
     `Current question: ${meetingState.currentQuestion ?? 'none'}`,
+    `Question intent: ${meetingState.questionIntent ?? 'none'}`,
     `Blocker: ${meetingState.blocker ?? 'none'}`,
     `Risky claim: ${meetingState.riskyClaim ?? 'none'}`,
     `Decision focus: ${meetingState.decisionFocus ?? 'none'}`,

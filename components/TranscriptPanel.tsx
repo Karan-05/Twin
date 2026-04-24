@@ -427,7 +427,7 @@ export default function TranscriptPanel() {
 
     if (!state.triggerReason) return
 
-    const fingerprint = `${state.triggerReason}:${state.currentQuestion ?? ''}:${state.riskyClaim ?? ''}:${state.blocker ?? ''}:${state.loopStatus ?? ''}`
+    const fingerprint = `${state.triggerReason}:${state.questionIntent ?? ''}:${state.currentQuestion ?? ''}:${state.riskyClaim ?? ''}:${state.blocker ?? ''}:${state.loopStatus ?? ''}`
     const now = Date.now()
 
     if (fingerprint === lastTriggerFingerprintRef.current) return

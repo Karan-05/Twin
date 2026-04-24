@@ -15,7 +15,7 @@ const PROMPT_FIELDS = [
   {
     key: 'clickDetailPrompt' as const,
     label: 'Click-to-Chat Detail Prompt',
-    hint: 'Use {full_transcript}, {suggestion_title}, {suggestion_detail}',
+    hint: 'Use {full_transcript}, {suggestion_title}, {suggestion_detail}, {suggestion_say}, {suggestion_why_now}, {suggestion_listen_for}, {suggestion_anchor}',
   },
   {
     key: 'chatSystemPrompt' as const,

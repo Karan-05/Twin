@@ -3,7 +3,16 @@ import { generateId, formatTimestamp } from './utils'
 import { withRetry } from './retry'
 import type { Suggestion, SuggestionBatch, TranscriptChunk, MeetingContext } from './store'
 import type { AppSettings } from './settings'
-import { buildConversationSignalsSection, extractConversationSignals, extractPrimaryTopic, isTechnicalQuestion, selectActionableQuestion } from './contextSignals'
+import type { QuestionCategory } from './contextSignals'
+import {
+  buildConversationSignalsSection,
+  extractConversationSignals,
+  extractPrimaryTopic,
+  inferQuestionCategory,
+  inferQuestionIntent,
+  isTechnicalQuestion,
+  selectActionableQuestion,
+} from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import type { MeetingState } from './meetingState'
 import { buildMeetingStateSection } from './meetingState'
@@ -73,21 +82,14 @@ function compactTopic(topic?: string): string {
   return topic.length > 28 ? `${topic.slice(0, 25).trimEnd()}…` : topic
 }
 
-type QuestionCategory = 'definition' | 'mechanism' | 'comparison' | 'reason' | 'tradeoff' | 'implementation' | 'general'
-
-function inferQuestionCategory(text: string): QuestionCategory {
-  const lower = text.toLowerCase()
-  if (/\bwhat is\b|\bwhat's\b|\bdefine\b|\bmeaning of\b/.test(lower)) return 'definition'
-  if (/\bhow does\b|\bhow do\b|\bhow can\b|\bhow to\b|\bworks?\b/.test(lower)) return 'mechanism'
-  if (/\bcompare\b|\bversus\b|\bvs\b|\bdifference\b|\bbetter than\b/.test(lower)) return 'comparison'
-  if (/\bwhy\b|\bwhy does\b|\bwhy do\b|\bimportance\b|\bmatter\b/.test(lower)) return 'reason'
-  if (/\btradeoff\b|\btrade-off\b|\bpros and cons\b|\bdownside\b|\bupside\b/.test(lower)) return 'tradeoff'
-  if (/\bimplement\b|\bintegration\b|\brollout\b|\bonboarding\b|\bfirst two weeks\b/.test(lower)) return 'implementation'
-  return 'general'
-}
-
 function buildSpeakableAnswerLine(topic: string, category: QuestionCategory): string {
   switch (category) {
+    case 'location':
+      return `Answer ${topic} as a location first, then add why that location matters in this discussion.`
+    case 'person':
+      return `Answer who ${topic} is first, then the role, context, or reason they matter here.`
+    case 'timing':
+      return `Answer the timing on ${topic} directly first, then state what that timing changes for this discussion.`
     case 'definition':
       return `Let me answer ${topic} directly: first what it is, then the practical way to think about it, then why it matters here.`
     case 'mechanism':
@@ -124,6 +126,12 @@ function inferSalesWorkflows(chunks: TranscriptChunk[]): string[] {
 
 function buildQuestionTitle(topic: string, category: QuestionCategory): string {
   switch (category) {
+    case 'location':
+      return `Locate ${compactTopic(topic)} clearly`
+    case 'person':
+      return `Explain who ${compactTopic(topic)} is`
+    case 'timing':
+      return `Clarify ${compactTopic(topic)} timing`
     case 'definition':
       return `Define ${compactTopic(topic)} clearly`
     case 'mechanism':
@@ -143,6 +151,12 @@ function buildQuestionTitle(topic: string, category: QuestionCategory): string {
 
 function buildSharpeningQuestion(topic: string, category: QuestionCategory): string {
   switch (category) {
+    case 'location':
+      return `Do you want the direct location of ${topic}, or why that location matters in this context?`
+    case 'person':
+      return `Do you want who ${topic} is, or why they matter to the decision here?`
+    case 'timing':
+      return `Do you want the date or timing on ${topic}, or the practical impact of that timing here?`
     case 'definition':
       return `Do you want the plain-English definition of ${topic}, or how it works in practice?`
     case 'mechanism':
@@ -280,6 +294,7 @@ function buildUserMessage(
     options.meetingState ?? {
       mode: 'probe',
       currentQuestion: null,
+      questionIntent: null,
       blocker: null,
       riskyClaim: null,
       decisionFocus: null,
@@ -490,6 +505,12 @@ function scoreSuggestion(
     if (suggestion.type === 'question') score -= 3
   }
 
+  if (meetingState?.questionIntent && meetingState.questionIntent !== 'meeting_coaching') {
+    if (suggestion.type === 'answer') score += 2.25
+    if (suggestion.type === 'talking_point') score += 1
+    if (suggestion.type === 'question') score -= 2.5
+  }
+
   if (meetingState?.riskyClaim && suggestion.type === 'fact_check') score += 3
   if (meetingState?.blocker && (suggestion.type === 'clarification' || suggestion.type === 'question')) score += 2
   if (meetingState?.deadlineSignal && suggestion.type === 'question') score += 1.5
@@ -551,12 +572,13 @@ function rankSuggestions(
 
   const chosen: Suggestion[] = []
   const usedTypes = new Set<string>()
+  const knowledgeAnswerMode = meetingState?.questionIntent && meetingState.questionIntent !== 'meeting_coaching'
 
   for (const candidate of scored) {
     if (chosen.length >= 3) break
     if (chosen.length > 0 && isSemanticDuplicate(candidate, chosen)) continue
 
-    if (!usedTypes.has(candidate.type) || chosen.length >= 2) {
+    if (knowledgeAnswerMode || !usedTypes.has(candidate.type) || chosen.length >= 2) {
       chosen.push(candidate)
       usedTypes.add(candidate.type)
     }
@@ -573,7 +595,8 @@ function rankSuggestions(
 
 export function buildFallbackSuggestions(
   recentChunks: TranscriptChunk[],
-  meetingContext: MeetingContext = { meetingType: '', userRole: '', goal: '', prepNotes: '' }
+  meetingContext: MeetingContext = { meetingType: '', userRole: '', goal: '', prepNotes: '' },
+  meetingState?: MeetingState
 ): Suggestion[] {
   const signals = extractConversationSignals(recentChunks)
   const topicLabels = extractTopicLabels(recentChunks)
@@ -590,49 +613,64 @@ export function buildFallbackSuggestions(
     const question = actionableQuestion
     const hasShortlist = comparisonSet.length >= 2
     const category = inferQuestionCategory(question.text)
+    const questionIntent = meetingState?.questionIntent ?? inferQuestionIntent(question.text, meetingContext)
 
     const rawText = [question.text, ...recentChunks.map((c) => c.text)].join(' ')
     const sellerishSales = isSellerishSalesContext(meetingContext)
+    const productKnowledge = questionIntent === 'product_knowledge'
 
-    if (sellerishSales && /\bvoice ai agents?\b|\bvoice agents?\b|\bagents?\b/.test(`${primaryTopic} ${rawText}`) && !isTechnicalQuestion(rawText, meetingContext)) {
+    if (productKnowledge) {
       const workflows = inferSalesWorkflows(recentChunks)
-      const workflowSummary = workflows[0] ?? 'customer conversations'
+      const workflowSummary = workflows[0] ?? 'the first workflow or use case'
       const workflowList = workflows.length > 1 ? workflows.join(', ') : workflowSummary
+      const productAngle = sellerishSales
+        ? `Treat "${question.text}" as a product-fit question, not a meeting tactic or systems deep-dive.`
+        : `Treat "${question.text}" as a product/category question that needs a plain-English answer first.`
 
       fallbacks.push({
         id: generateId(),
         type: 'answer',
         title: `Define the ${compactTopic(primaryTopic)} clearly`,
-        detail: `They asked: "${question.text}" [${question.timestamp}]. Answer this as a product/use-case question, not an architecture question. Name the main workflow categories already mentioned — ${workflowList} — and explain which conversation jobs these agents actually handle.`,
-        say: `We are mainly talking about ${workflowSummary} agents that stay available 24/7, handle repetitive customer conversations, and cost less than a human team for that workflow.`,
-        whyNow: 'The buyer asked what kind of agents these are, so they need the product category and use case before any deeper detail.',
-        listenFor: 'Which workflow they actually care about first — that tells you where to anchor the rest of the pitch.',
+        detail: `They asked: "${question.text}" [${question.timestamp}]. ${productAngle} Answer in three beats: what ${primaryTopic} is, which workflow or use case it serves${workflows.length > 0 ? ` — ${workflowList}` : ''}, and the practical differentiator or trade-off.`,
+        say: sellerishSales
+          ? `At a high level, ${primaryTopic} is best understood by the workflow it handles, the team it helps, and the outcome it improves — the first thing to pin down is which use case matters most for you.`
+          : `The cleanest way to answer ${primaryTopic} is the job it does, where it fits in the workflow, and the trade-off that matters most in practice.`,
+        whyNow: 'This is a direct product question, so the answer should define the category and use case before probing further.',
+        listenFor: 'The workflow, team, or outcome they care about first — that tells you which product angle matters.',
       })
 
       fallbacks.push({
         id: generateId(),
         type: 'question',
-        title: 'Pick the first workflow',
-        detail: `Do not keep pitching "agents" in the abstract. Ask which workflow matters most first — for example ${workflowList} — so the conversation moves from generic curiosity to a concrete buying use case.`,
-        say: `Which workflow matters most for you first — ${workflowList}? That will tell me which kind of agent is actually relevant.`,
-        whyNow: 'One concrete workflow is easier to evaluate than a broad AI-agent pitch.',
+        title: workflows.length > 0 ? 'Pick the first workflow' : 'Pick the first use case',
+        detail: workflows.length > 0
+          ? `Do not keep the conversation at the category level. Ask which workflow matters most first — ${workflowList} — so the answer lands on a concrete use case instead of a broad product label.`
+          : `Do not stay at the category level. Ask which use case or buyer outcome matters first so the answer becomes concrete instead of generic.`,
+        say: workflows.length > 0
+          ? `Which workflow matters most for you first — ${workflowList}? That will tell me which version of this answer is actually relevant.`
+          : `Which use case matters most for you first? That will tell me which part of ${primaryTopic} is actually relevant.`,
+        whyNow: 'One concrete use case is easier to evaluate than a broad product label.',
         listenFor: 'A specific workflow, team, or pain point instead of general curiosity.',
       })
 
       fallbacks.push({
         id: generateId(),
         type: 'talking_point',
-        title: 'Anchor on the 24/7 economics',
-        detail: `Your best angle is not "AI agents" as a category — it is the workflow economics already in the transcript: available **24/7**, more consistent engagement, and lower cost than a purely human calling workflow. Tie that to one workflow instead of listing features.`,
-        say: `The useful way to evaluate this is not "all possible agents" — it is which workflow benefits most from 24/7 coverage and lower cost right away.`,
-        whyNow: 'That shifts the conversation from curiosity about AI into business value and fit.',
-        listenFor: 'Whether they respond to cost, coverage, or a specific workflow bottleneck.',
+        title: sellerishSales ? 'Anchor on the buyer outcome' : `Name the ${compactTopic(primaryTopic)} tradeoff`,
+        detail: sellerishSales
+          ? `Translate the category into business value: name the workflow outcome, the operator or team it helps, and the reason it is better than staying manual or fragmented. Tie the explanation to a buyer outcome instead of listing features.`
+          : `Move beyond description to the practical trade-off. The useful thing to say about ${primaryTopic} is what it makes easier, harder, faster, slower, cheaper, or riskier in actual use.`,
+        say: sellerishSales
+          ? `The useful way to evaluate ${primaryTopic} is not as a buzzword — it is which workflow improves first, for which team, and what business outcome changes because of it.`
+          : `The key thing to say about ${primaryTopic} is not just what it is — it is which trade-off matters most when you actually use it.`,
+        whyNow: 'That turns a broad product question into a usable evaluation frame.',
+        listenFor: 'Whether they respond to workflow fit, buyer outcome, cost, or a specific operational trade-off.',
       })
 
       return sanitizeSuggestions(fallbacks)
     }
 
-    if (isTechnicalQuestion(rawText, meetingContext)) {
+    if (questionIntent === 'technical_knowledge' || isTechnicalQuestion(rawText, meetingContext)) {
       const topic = primaryTopic || 'the system'
       const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${rawText}`)
 
@@ -957,7 +995,7 @@ export async function generateSuggestionBatch(
 
   suggestions = rankSuggestions(suggestions, promptChunks, meetingContext, options.meetingState)
 
-  const fallbackSuggestions = buildFallbackSuggestions(promptChunks, meetingContext)
+  const fallbackSuggestions = buildFallbackSuggestions(promptChunks, meetingContext, options.meetingState)
   const previousTitleKeys = new Set(previousSuggestions.map((s) => s.title.trim().toLowerCase()))
   for (const fallback of fallbackSuggestions) {
     if (suggestions.length >= 3) break
@@ -977,13 +1015,13 @@ export async function generateSuggestionBatch(
 
   // Single last-resort pad — 2 real suggestions + 1 contextual pad beats 3 generic ones.
   if (suggestions.length < 3) {
-    const pad: Suggestion = padQuestion
+  const pad: Suggestion = padQuestion
       ? {
           id: generateId(),
           type: 'answer',
           title: `Answer their ${padTopicStr} question directly`,
-          detail: `An open question is waiting: "${padQuestion.slice(0, 90)}${padQuestion.length > 90 ? '…' : ''}" — give a focused answer rather than a broad overview.`,
-          say: `Here's the direct answer on ${padTopicStr}: what matters most is…`,
+          detail: `An open question is waiting: "${padQuestion.slice(0, 90)}${padQuestion.length > 90 ? '…' : ''}" — answer the fact, mechanism, or comparison directly before adding extra framing.`,
+          say: `The direct answer on ${padTopicStr} is the fact or mechanism itself first — then the one implication that matters here.`,
           whyNow: 'A direct question is open — a focused answer moves things forward faster than a general explanation.',
           listenFor: 'Whether the answer resolves their question or surfaces a more specific need.',
         }

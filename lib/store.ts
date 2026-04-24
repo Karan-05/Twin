@@ -116,6 +116,7 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
   meetingState: {
     mode: 'probe',
     currentQuestion: null,
+    questionIntent: null,
     blocker: null,
     riskyClaim: null,
     decisionFocus: null,
@@ -185,6 +186,7 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
       meetingState: {
         mode: 'probe',
         currentQuestion: null,
+        questionIntent: null,
         blocker: null,
         riskyClaim: null,
         decisionFocus: null,
