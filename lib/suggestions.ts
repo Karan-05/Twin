@@ -387,14 +387,6 @@ function scoreSuggestion(
     if (/(first two weeks|implementation|timeline|q4|finance|operations|ops|approval)/i.test(combinedText)) score += 1
   }
 
-  if (/(bilingual|spanish|translated|translation|operations team|equipo de operaciones|migración larga|migracion larga)/i.test(combinedText)) {
-    score += 0.9
-  }
-
-  if ((meetingContext.prepNotes ?? '').toLowerCase().includes('bilingual') && /(operations|ops|finance|q4|internal approval|stall)/i.test(combinedText)) {
-    score += 0.75
-  }
-
   if (suggestion.say) score += 1.5
   if (suggestion.whyNow) score += 1
   if (suggestion.listenFor) score += 1
@@ -467,7 +459,7 @@ function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Suggestion[]
         ? `Let me anchor on ${primaryTopic}: compared with ${comparisonSet.slice(1, 3).join(' and ')}, the real question is which one fits your use case best.`
         : `Let me anchor on ${primaryTopic} first and answer that directly before we widen the comparison.`,
       whyNow: 'A direct question just landed, so the best move is a focused answer on the exact topic they named.',
-      listenFor: 'Which evaluation axis matters most: quality, multilingual support, creator workflow, or stack fit.',
+      listenFor: 'A concrete criterion — quality, cost, workflow fit, or integration — so the answer moves beyond a generic overview.',
     })
 
     fallbacks.push({
@@ -475,7 +467,7 @@ function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Suggestion[]
       type: 'question',
       title: 'Choose the comparison axis',
       detail: `The transcript already contains a shortlist (${comparisonText}). Ask which dimension they actually care about so you can compare on one axis instead of giving a wandering overview.`,
-      say: 'Which matters most here — voice quality, multilingual coverage, creator workflow, or enterprise stack fit?',
+      say: `Which matters most here — quality, cost, workflow fit, or how ${primaryTopic} integrates into your existing stack?`,
       whyNow: 'That one question turns a generic explainer into a useful recommendation.',
       listenFor: 'A concrete buying/evaluation criterion instead of more tool names.',
     })
