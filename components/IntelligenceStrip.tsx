@@ -52,13 +52,17 @@ export default function IntelligenceStrip() {
   const transcriptRef = useRef(transcript)
   const apiKeyRef = useRef(apiKey)
   const meetingContextRef = useRef(meetingContext)
+  const isGeneratingSuggestionsRef = useRef(isGeneratingSuggestions)
+  const isStreamingChatRef = useRef(isStreamingChat)
 
   useEffect(() => { transcriptRef.current = transcript }, [transcript])
   useEffect(() => { apiKeyRef.current = apiKey }, [apiKey])
   useEffect(() => { meetingContextRef.current = meetingContext }, [meetingContext])
+  useEffect(() => { isGeneratingSuggestionsRef.current = isGeneratingSuggestions }, [isGeneratingSuggestions])
+  useEffect(() => { isStreamingChatRef.current = isStreamingChat }, [isStreamingChat])
 
   const runExtraction = async () => {
-    if (!apiKeyRef.current || transcriptRef.current.length < 2 || isGeneratingSuggestions || isStreamingChat) return
+    if (!apiKeyRef.current || transcriptRef.current.length < 2 || isGeneratingSuggestionsRef.current || isStreamingChatRef.current) return
     setIsExtractingIntelligence(true)
     try {
       const summary = await extractIntelligenceSummary(
@@ -89,7 +93,7 @@ export default function IntelligenceStrip() {
       if (timerRef.current) clearInterval(timerRef.current)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRecording, isGeneratingSuggestions, isStreamingChat])
+  }, [isRecording])
 
   const hasAnyData = intelligenceSummary && (
     intelligenceSummary.decisions.length > 0 ||
