@@ -878,7 +878,7 @@ async function judgeJson<T>(groq: Groq, prompt: string): Promise<T> {
     groq,
     [{ role: 'user', content: prompt }],
     'object',
-    900,
+    1800,
     0.1,
     true
   )
@@ -1095,14 +1095,30 @@ async function main() {
 
   const prompts = await loadPromptBundle()
   const groq = new Groq({ apiKey })
-  const results: EvalResult[] = []
 
-  for (const scenario of scenarios) {
-    console.log(`Evaluating ${scenario.id}...`)
-    results.push(await evaluateScenario(groq, prompts, scenario, mode))
+  // Load any previously saved results so incremental runs accumulate
+  const directory = path.join(process.cwd(), 'eval', 'results')
+  let results: EvalResult[] = []
+  try {
+    const prior = JSON.parse(await fs.readFile(path.join(directory, 'latest.json'), 'utf8')) as { results: EvalResult[] }
+    if (!fixture) results = prior.results ?? []
+  } catch { /* no prior results */ }
+
+  const completedIds = new Set(results.map((r) => r.scenarioId))
+  const pending = scenarios.filter((s) => !completedIds.has(s.id))
+
+  if (pending.length === 0) {
+    console.log('All scenarios already evaluated. Delete eval/results/latest.json to re-run.')
+    printResults(results)
+    return
   }
 
-  await persistResults(results, mode, fixture)
+  for (const scenario of pending) {
+    console.log(`Evaluating ${scenario.id}...`)
+    results.push(await evaluateScenario(groq, prompts, scenario, mode))
+    await persistResults(results, mode, fixture)
+  }
+
   printResults(results)
 }
 

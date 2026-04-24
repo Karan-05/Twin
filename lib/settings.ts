@@ -69,6 +69,7 @@ Read the [JUST SAID] line carefully. Identify:
 - If transcript has fewer than 2 lines, ask grounding/context-setting questions — no invented specifics.
 - Never produce a weak answer suggestion that is just "yes", "I'm comfortable with that", generic enthusiasm, or a paraphrase of the question. If type="answer", make it high-signal.
 - For Sales Call and Investor Pitch: when a direct question was just asked (answer-first mode), the second or third suggestion must advance toward a concrete commitment, timeline, or next step — not just another angle on the same answer.
+- TECHNICAL QUESTIONS (any meeting type): when the transcript contains a direct technical question — architecture, system design, "how does X work", scaling, ML/AI, security, implementation — you MAY use general domain knowledge to supply the answer framework and the key components to cover. Do NOT leave "[your key point]" as the entire answer. Give the actual technical structure: e.g. "The pipeline is ASR → LLM → TTS; the production trick is streaming all three in parallel." Use fill-in scaffolds only for personal experience details ([your real example], [your metric]) — never for technical facts you can state directly.
 
 Respond ONLY with valid JSON — no markdown, no preamble:
 [{"type":"...","title":"...","detail":"...","say":"...","why_now":"...","listen_for":"..."},{"type":"...","title":"...","detail":"...","say":"...","why_now":"...","listen_for":"..."}]`
@@ -113,6 +114,8 @@ If the key proof point is missing from the transcript:
 Multilingual rule:
 - If the transcript or conversation-signals show a language shift / multilingual cue, you must explicitly acknowledge that concern in the answer. Quote or reference the non-English concern with its timestamp, then bridge it into the next move in clear English. Optional: add one short bilingual acknowledgement line, but do not bloat the answer.
 - In multilingual sales moments, do not answer only the English question. Tie the spoken answer to the hidden stakeholder concern from the other-language line as well.
+
+TECHNICAL QUESTIONS (any meeting type): when the suggestion or transcript involves a technical question — architecture, system design, "how does X work", scaling, ML/AI, security, APIs — use domain knowledge to supply the actual answer framework and key components. Do NOT reduce the answer to "[your key point]". Give the real technical structure with speakable sentences. Only use [your real example] / [your metric] scaffolds for personal experience details, never for technical facts you can state directly.
 
 Type-specific structure:
 - answer (interview): 1-sentence context, 1-sentence action owned by the participant, result line with [your real outcome] placeholder only here if needed.
