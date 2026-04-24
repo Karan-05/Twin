@@ -2,7 +2,7 @@ const WINDOW_MS = 60_000
 const SOFT_TPM_BUDGET = 10000
 const SKIP_LOW_PRIORITY = '__groq_skip_low_priority__'
 const FALLBACK_HIGH_PRIORITY = '__groq_fallback_high_priority__'
-const MAX_HIGH_PRIORITY_WAIT_MS = 6_000
+const MAX_HIGH_PRIORITY_WAIT_MS = 12_000
 
 type Priority = 'high' | 'low'
 

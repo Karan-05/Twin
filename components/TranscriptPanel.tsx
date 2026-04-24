@@ -338,6 +338,8 @@ export default function TranscriptPanel() {
   const sentimentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flushRecorderRef = useRef<(continueRecording: boolean) => Promise<void>>(async () => {})
   const commitStableWindowRef = useRef<(force?: boolean) => Promise<void>>(async () => {})
+  const flushInFlightRef = useRef<Promise<void> | null>(null)
+  const stopAfterFlushRef = useRef(false)
   const lastProvisionalTaskRef = useRef<Promise<void>>(Promise.resolve())
   const processingCountRef = useRef(0)
   const lastTriggerAtRef = useRef(0)
@@ -395,6 +397,10 @@ export default function TranscriptPanel() {
         .catch(() => {})
     }, SENTIMENT_DEBOUNCE_MS)
   }, [transcript.length, updateChunkSentiment])
+
+  useEffect(() => {
+    setMeetingState(deriveMeetingState(transcript, meetingContext, ''))
+  }, [meetingContext, setMeetingState, transcript])
 
   const handleCopy = (id: string, text: string) => {
     navigator.clipboard.writeText(text)
@@ -463,7 +469,6 @@ export default function TranscriptPanel() {
     provisionalTextsRef.current = []
     stableWindowStartedAtRef.current = Date.now()
     setLiveTranscriptPreview('')
-    setMeetingState(deriveMeetingState(transcriptRef.current, meetingContextRef.current, ''))
 
     if (blobParts.length === 0) {
       if (previewText) commitStableText(previewText)
@@ -497,7 +502,7 @@ export default function TranscriptPanel() {
       setTimeout(() => setError(null), 4000)
       if (previewText) commitStableText(previewText)
     }
-  }, [commitStableText, setLiveTranscriptPreview, setMeetingState, withProcessing])
+  }, [commitStableText, setLiveTranscriptPreview, withProcessing])
 
   const transcribeProvisionalBlob = useCallback(async (blob: Blob, mimeType: string) => {
     if (blob.size < MIN_BLOB_BYTES) return
@@ -548,37 +553,57 @@ export default function TranscriptPanel() {
   }, [])
 
   const flushRecorder = useCallback(async (continueRecording: boolean) => {
+    if (!continueRecording) {
+      stopAfterFlushRef.current = true
+    }
+
+    if (flushInFlightRef.current) {
+      return flushInFlightRef.current
+    }
+
     const recorder = mediaRecorderRef.current
-    if (!recorder || recorder.state === 'inactive') return
+    if (!recorder || recorder.state === 'inactive') {
+      stopAfterFlushRef.current = false
+      return
+    }
 
-    if (timerRef.current) clearTimeout(timerRef.current)
+    const run = (async () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
 
-    await new Promise<void>((resolve) => {
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data)
-      }
-
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current || 'audio/webm' })
-        chunksRef.current = []
-        if (blob.size > 0) {
-          stableBlobPartsRef.current.push(blob)
+      await new Promise<void>((resolve) => {
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunksRef.current.push(e.data)
         }
 
-        if (continueRecording && activeRef.current && streamRef.current) {
-          restartRecorder()
-        } else {
-          mediaRecorderRef.current = null
+        recorder.onstop = () => {
+          const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current || 'audio/webm' })
+          chunksRef.current = []
+          if (blob.size > 0) {
+            stableBlobPartsRef.current.push(blob)
+          }
+
+          const shouldContinue = continueRecording && activeRef.current && streamRef.current && !stopAfterFlushRef.current
+          if (shouldContinue) {
+            restartRecorder()
+          } else {
+            mediaRecorderRef.current = null
+          }
+
+          const provisionalTask = transcribeProvisionalBlob(blob, mimeTypeRef.current)
+          lastProvisionalTaskRef.current = provisionalTask
+          void provisionalTask
+          stopAfterFlushRef.current = false
+          resolve()
         }
 
-        const provisionalTask = transcribeProvisionalBlob(blob, mimeTypeRef.current)
-        lastProvisionalTaskRef.current = provisionalTask
-        void provisionalTask
-        resolve()
-      }
-
-      recorder.stop()
+        recorder.stop()
+      })
+    })().finally(() => {
+      flushInFlightRef.current = null
     })
+
+    flushInFlightRef.current = run
+    await run
   }, [restartRecorder, transcribeProvisionalBlob])
 
   const cycleRecorder = useCallback(() => {
@@ -695,6 +720,38 @@ export default function TranscriptPanel() {
     window.addEventListener('meeting-copilot:flush-transcript', handleFlushRequest)
     return () => window.removeEventListener('meeting-copilot:flush-transcript', handleFlushRequest)
   }, [flushRecorder])
+
+  useEffect(() => {
+    const handleStopRequest = async (event: Event) => {
+      const { requestId } = (event as CustomEvent<{ requestId: string }>).detail
+      let error: string | undefined
+
+      try {
+        if (activeRef.current) {
+          await stopRecording()
+        }
+      } catch (err) {
+        error = err instanceof Error ? err.message : 'Stop recording failed'
+      }
+
+      window.dispatchEvent(
+        new CustomEvent('meeting-copilot:recording-stopped', {
+          detail: { requestId, error },
+        })
+      )
+    }
+
+    window.addEventListener('meeting-copilot:stop-recording', handleStopRequest)
+    return () => window.removeEventListener('meeting-copilot:stop-recording', handleStopRequest)
+  }, [stopRecording])
+
+  useEffect(() => () => {
+    activeRef.current = false
+    if (timerRef.current) clearTimeout(timerRef.current)
+    if (sentimentTimerRef.current) clearTimeout(sentimentTimerRef.current)
+    streamRef.current?.getTracks().forEach((track) => track.stop())
+    systemStreamRef.current?.getTracks().forEach((track) => track.stop())
+  }, [])
 
   const contextSet = meetingContext.meetingType || meetingContext.userRole || meetingContext.prepNotes
 

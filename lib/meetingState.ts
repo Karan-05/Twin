@@ -1,5 +1,5 @@
 import type { MeetingContext, TranscriptChunk } from './store'
-import { extractConversationSignals } from './contextSignals'
+import { extractConversationSignals, selectActionableQuestion } from './contextSignals'
 
 export type SuggestionTriggerReason = 'question' | 'risky_claim' | 'blocker' | 'deadline' | 'loop'
 
@@ -77,7 +77,7 @@ export function deriveMeetingState(
   if (chunks.length === 0) return EMPTY_STATE
 
   const signals = extractConversationSignals(chunks)
-  const currentQuestion = signals.questions[0]?.text ?? null
+  const currentQuestion = selectActionableQuestion(chunks, meetingContext)?.text ?? null
   const blocker = signals.risks[0]?.text ?? null
   const riskyClaim = signals.numericClaims[0]?.text ?? null
   const deadlineSignal = signals.commitments.find((line) => DEADLINE_PATTERN.test(line.text))?.text
@@ -87,14 +87,15 @@ export function deriveMeetingState(
   const stakeholderSignals = collectStakeholders(chunks, meetingContext.prepNotes)
 
   let mode: MeetingState['mode'] = 'probe'
-  if (currentQuestion) mode = 'answer'
-  else if (blocker && deadlineSignal) mode = 'unblock'
+  if (blocker && deadlineSignal) mode = 'unblock'
   else if (riskyClaim) mode = 'decide'
+  else if (currentQuestion) mode = 'answer'
   else if (signals.commitments.length > 0) mode = 'close'
 
   let triggerReason: SuggestionTriggerReason | null = null
-  if (currentQuestion) triggerReason = 'question'
+  if (blocker && deadlineSignal) triggerReason = 'deadline'
   else if (riskyClaim) triggerReason = 'risky_claim'
+  else if (currentQuestion) triggerReason = 'question'
   else if (blocker) triggerReason = 'blocker'
   else if (deadlineSignal) triggerReason = 'deadline'
   else if (loopStatus) triggerReason = 'loop'
@@ -126,4 +127,3 @@ export function buildMeetingStateSection(meetingState: MeetingState): string {
     `Stakeholders: ${meetingState.stakeholderSignals.length > 0 ? meetingState.stakeholderSignals.join(' · ') : 'none'}`,
   ].join('\n')
 }
-

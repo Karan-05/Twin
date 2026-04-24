@@ -185,7 +185,7 @@ The transcript/suggestions path is intentionally coupled: the user always sees s
 |---|---|
 | **~30s recording cycles** | Matches the brief and keeps suggestion refreshes aligned to fresh transcript context. Manual refresh is the escape hatch when the user wants an update sooner. |
 | **30s suggestion window** | Enough new content to analyse vs. keeping suggestions timely. Configurable in Settings. |
-| **Context window = last 5 chunks** | Keeps suggestion prompts fast and focused. Detailed answers can use full transcript or a configurable truncated window from Settings. |
+| **Context window = last 6 chunks** | Gives the live model slightly more room to see the thread without dragging too much stale context into the prompt. Detailed answers can use full transcript or a configurable truncated window from Settings. |
 | **whisper-large-v3 over turbo** | Slightly slower, but meaningfully better accuracy on technical, business, and proper-noun-heavy speech. Worth it for a meeting copilot. |
 | **Fragment merging** | Chunks < 40 chars are appended to the previous chunk rather than displayed as a new line. Keeps transcript readable without changing the audio pipeline. |
 | **Intelligence Strip cadence** | 60s (not 30s) to avoid racing the suggestion API on shared rate limits. Staggered 15s from suggestions. |

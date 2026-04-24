@@ -7,7 +7,7 @@
  */
 
 import { buildFallbackSuggestions } from '../lib/suggestions'
-import type { TranscriptChunk } from '../lib/store'
+import type { TranscriptChunk, MeetingContext } from '../lib/store'
 
 let passed = 0
 let failed = 0
@@ -116,6 +116,89 @@ assert(genericSuggestions.length >= 1, 'returns at least 1 suggestion')
 assert(
   !genericSuggestions.some((s) => /asr|tts|llm pipeline|kafka|redis/i.test(s.say)),
   `does NOT inject unrelated technical content`
+)
+
+// ---------------------------------------------------------------------------
+// Scenario 5: LLM question — no "latest topic" collapse
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 5] LLM question — preserves the actual topic and gives concrete content')
+
+const llmChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:05:00', text: 'What is LLM ??' },
+  { id: '2', timestamp: '00:05:10', text: 'So yeah how does an LLM actually work with tokenization and embeddings and how does it respond intelligently' },
+]
+
+const llmSuggestions = buildFallbackSuggestions(llmChunks)
+
+assert(llmSuggestions.length === 3, 'returns 3 suggestions')
+assert(
+  llmSuggestions.some((s) => /llm/i.test(s.title)),
+  `at least one title references "LLM" (got: ${llmSuggestions.map(s => s.title).join(' | ')})`
+)
+assert(
+  llmSuggestions.some((s) => /tokeniz|embedding|attention|next token/i.test(s.say)),
+  `at least one 'say' includes concrete LLM mechanics`
+)
+assert(
+  !llmSuggestions.some((s) => /latest topic/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `does not collapse the subject to "latest topic"`
+)
+
+// ---------------------------------------------------------------------------
+// Scenario 6: Generic concept question — no placeholder answer scaffolds
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 6] Generic concept question — no placeholder scaffolds')
+
+const conceptChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:06:00', text: 'What is product market fit and why does it matter so much' },
+  { id: '2', timestamp: '00:06:12', text: 'I keep hearing it everywhere but I want a clean way to explain it in a meeting' },
+]
+
+const conceptSuggestions = buildFallbackSuggestions(conceptChunks)
+
+assert(conceptSuggestions.length === 3, 'returns 3 suggestions')
+assert(
+  !conceptSuggestions.some((s) => /\[(your|specific|key|metric|example|point|outcome)/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `does not use placeholder-style scaffolds in generic topic fallbacks`
+)
+assert(
+  conceptSuggestions.some((s) => /what it is|why it matters|one axis|trade-off|directly/i.test(s.say)),
+  `includes a concrete, speakable answer structure for a generic topic`
+)
+
+// ---------------------------------------------------------------------------
+// Scenario 7: Sales pitch about voice AI agents — not treated as architecture
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 7] Voice AI agent sales call — pitch questions stay product-level')
+
+const salesChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:07:00', text: 'Thank you thank you.' },
+  { id: '2', timestamp: '00:07:10', text: 'We are building and providing real time voice AI agents for calling and deal sourcing workflows so companies do not need human teams only working eight hours a day.' },
+  { id: '3', timestamp: '00:07:28', text: 'The agents stay available 24 7 and cost less than a human workforce for repetitive conversations.' },
+  { id: '4', timestamp: '00:07:42', text: 'Would you like to know more about that?' },
+  { id: '5', timestamp: '00:07:55', text: 'What kind of agents are we talking about? I would like to know more about the agents.' },
+]
+
+const salesContext: MeetingContext = {
+  meetingType: 'Sales Call',
+  userRole: 'Seller',
+  goal: 'Explain the product clearly and qualify the right workflow'
+}
+
+const salesSuggestions = buildFallbackSuggestions(salesChunks, salesContext)
+
+assert(salesSuggestions.length === 3, 'returns 3 suggestions')
+assert(
+  !salesSuggestions.some((s) => /thank/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `does not collapse onto filler like "thank"`
+)
+assert(
+  !salesSuggestions.some((s) => /explain .*architecture|latency budget|consistency requirements/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `does not force the sales question into a technical architecture fallback`
+)
+assert(
+  salesSuggestions.some((s) => /workflow|24\/7|24 7|deal sourcing|calling/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `anchors the answer on product workflows and economics already in the pitch`
 )
 
 // ---------------------------------------------------------------------------

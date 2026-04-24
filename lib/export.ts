@@ -9,7 +9,8 @@ export function exportSession(
   meetingContext?: MeetingContext,
   intelligenceSummary?: IntelligenceSummary | null,
   sessionStartTime?: number | null,
-  settings?: AppSettings
+  settings?: AppSettings,
+  liveTranscriptPreview?: string
 ): void {
   const now = new Date()
   const stamp = [
@@ -36,6 +37,7 @@ export function exportSession(
     },
     intelligence: intelligenceSummary ?? null,
     transcript,
+    liveTranscriptPreview: liveTranscriptPreview?.trim() || null,
     suggestionBatches,
     chatMessages: messages,
     // Included so evaluators can see exactly which prompts produced these outputs

@@ -2,7 +2,7 @@ import Groq from 'groq-sdk'
 import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions'
 import type { Message, TranscriptChunk, MeetingContext } from './store'
 import type { AppSettings } from './settings'
-import { buildConversationSignalsSection, extractConversationSignals } from './contextSignals'
+import { buildConversationSignalsSection, extractConversationSignals, extractPrimaryTopic, selectActionableQuestion } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import { buildMeetingStateSection, deriveMeetingState } from './meetingState'
 import { withGroqTextBudget } from './groqBudget'
@@ -13,6 +13,32 @@ const DETAIL_CONTEXT_CHAR_BUDGET = 3600
 const CHAT_MAX_TOKENS = 700
 const DETAIL_MAX_TOKENS = 580
 
+type QuestionCategory = 'definition' | 'mechanism' | 'comparison' | 'reason' | 'tradeoff' | 'implementation' | 'general'
+
+function inferQuestionCategory(text: string): QuestionCategory {
+  const lower = text.toLowerCase()
+  if (/\bwhat is\b|\bwhat's\b|\bdefine\b|\bmeaning of\b/.test(lower)) return 'definition'
+  if (/\bhow does\b|\bhow do\b|\bhow can\b|\bhow to\b|\bworks?\b/.test(lower)) return 'mechanism'
+  if (/\bcompare\b|\bversus\b|\bvs\b|\bdifference\b|\bbetter than\b/.test(lower)) return 'comparison'
+  if (/\bwhy\b|\bimportance\b|\bmatter\b/.test(lower)) return 'reason'
+  if (/\btradeoff\b|\btrade-off\b|\bpros and cons\b|\bdownside\b|\bupside\b/.test(lower)) return 'tradeoff'
+  if (/\bimplement\b|\bintegration\b|\brollout\b|\bonboarding\b|\bfirst two weeks\b/.test(lower)) return 'implementation'
+  return 'general'
+}
+
+function isSellerishSalesContext(meetingContext: MeetingContext): boolean {
+  return meetingContext.meetingType === 'Sales Call' && /\b(seller|account executive|sales manager)\b/i.test(meetingContext.userRole || '')
+}
+
+function inferSalesWorkflowSummary(transcript: TranscriptChunk[]): string {
+  const text = transcript.map((chunk) => chunk.text).join(' ').toLowerCase()
+  if (/\bdeal sourc|outbound|calling\b/.test(text)) return 'outbound calling and deal sourcing'
+  if (/\bfollow[- ]?up\b/.test(text)) return 'follow-up conversations'
+  if (/\bqualif(y|ication)\b/.test(text)) return 'lead qualification'
+  if (/\bappointment|book meetings?\b/.test(text)) return 'meeting booking'
+  return 'customer conversations'
+}
+
 function buildLocalChatFallback(
   transcript: TranscriptChunk[],
   meetingContext: MeetingContext,
@@ -20,8 +46,42 @@ function buildLocalChatFallback(
 ): string {
   const signals = extractConversationSignals(transcript.slice(-8))
   const latest = transcript[transcript.length - 1]
-  const topic = signals.topics.slice(0, 2).join(' / ') || meetingContext.goal || 'current topic'
-  const question = signals.questions[0]
+  const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${userMessage}`) || signals.topics.slice(0, 2).join(' / ') || meetingContext.goal || 'current topic'
+  const question = selectActionableQuestion(transcript.slice(-8), meetingContext)
+  const category = inferQuestionCategory(question?.text ?? userMessage)
+  const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${userMessage} ${question?.text ?? ''}`)
+
+  if (llmLike) {
+    return [
+      '**In short:** Explain the runtime path clearly: **tokenization -> embeddings -> transformer attention -> next-token decoding**.',
+      question ? `- Open question: "${question.text}" [${question.timestamp}]` : `- Topic: **${topic}**`,
+      '- Tokenization splits the input text into model-sized tokens.',
+      '- Embeddings turn those tokens into vectors, and positional information preserves order.',
+      '- Transformer self-attention layers update each token representation using the surrounding context.',
+      '- Decoding picks the next token repeatedly until the model reaches a stopping point.',
+      '> "Say: An LLM tokenizes the prompt, maps tokens to embeddings, runs attention over the sequence, and predicts the next token repeatedly until the answer is complete."',
+      '- Groq is temporarily rate-limited, so this is a local technical fallback.',
+    ].join('\n')
+  }
+
+  const genericCategoryLine = (() => {
+    switch (category) {
+      case 'definition':
+        return '- Answer it in order: what it is, how to think about it practically, and why it matters in this conversation.'
+      case 'mechanism':
+        return '- Answer it as a sequence: input, processing, output, and the main trade-off or bottleneck.'
+      case 'comparison':
+        return '- Compare it on one axis first — quality, cost, speed, risk, or fit — before adding nuance.'
+      case 'reason':
+        return '- Focus on why it matters, what changes because of it, and which decision it should influence.'
+      case 'tradeoff':
+        return '- Name the main trade-off explicitly, then say which side matters more here.'
+      case 'implementation':
+        return '- Walk through what happens first, where friction shows up, and what must be true for it to go smoothly.'
+      default:
+        return '- Give the direct answer first, then one implication that matters for this meeting.'
+    }
+  })()
 
   const lines = [
     '**In short:** Use the latest thread to move the conversation on **' + topic + '** right now.',
@@ -35,6 +95,7 @@ function buildLocalChatFallback(
     lines.push(`- Open question still hanging: "${question.text}" [${question.timestamp}]`) 
   }
 
+  lines.push(genericCategoryLine)
   lines.push(`- Your question: "${userMessage}"`)
   lines.push('- Groq is temporarily rate-limited, so this is a local fallback. Ask one clarifying question or lock one next step while the quota window resets.')
   return lines.join('\n')
@@ -44,15 +105,23 @@ function buildLocalDetailedFallback(
   suggestionTitle: string,
   suggestionType: string,
   suggestionDetail: string,
+  suggestionSay: string | undefined,
   transcript: TranscriptChunk[],
   meetingContext: MeetingContext
 ): string {
   const signals = extractConversationSignals(transcript.slice(-8))
   const latest = transcript[transcript.length - 1]
-  const openQuestion = signals.questions[0]
+  const openQuestion = selectActionableQuestion(transcript.slice(-8), meetingContext)
   const riskyItem = signals.numericClaims[0] || signals.risks[0]
   const commitment = signals.commitments[0]
   const goalClause = meetingContext.goal ? `**${meetingContext.goal}**` : 'your stated goal'
+  const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${suggestionTitle}`) || 'current topic'
+  const category = inferQuestionCategory(openQuestion?.text ?? suggestionTitle)
+  const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`)
+  const salesVoiceAgents =
+    isSellerishSalesContext(meetingContext) &&
+    /\bvoice ai agents?\b|\bvoice agents?\b|\bagents?\b/.test(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`)
+  const workflowSummary = inferSalesWorkflowSummary(transcript)
 
   const anchor =
     suggestionType === 'answer' || suggestionType === 'question' ? openQuestion ?? latest
@@ -64,6 +133,33 @@ function buildLocalDetailedFallback(
     ? `**Evidence:** "${anchor.text}" [${anchor.timestamp}]`
     : '**Evidence:** Thin transcript — using suggestion framing.'
 
+  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && llmLike) {
+    return [
+      evidenceLine,
+      '',
+      '**In short:** Explain the runtime path: **tokenization -> embeddings -> transformer attention -> next-token decoding**.',
+      '- Tokenization breaks the input text into tokens the model can process.',
+      '- Embeddings convert those tokens into vectors, and positional information preserves order in the sequence.',
+      '- Transformer attention layers update each token representation using the surrounding context, which is where the model gets contextual understanding.',
+      '- Decoding then chooses one token at a time until the answer is complete; training is the earlier process that taught those weights what token patterns are likely.',
+      '> "Say: An LLM tokenizes the prompt, maps tokens into embeddings, runs attention over the sequence to build context, and then predicts the next token repeatedly until the full answer is formed."',
+      '- [ ] Next step to lock: ask whether they want the training loop next, or a deeper dive on embeddings versus attention.',
+    ].join('\n')
+  }
+
+  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && salesVoiceAgents) {
+    return [
+      evidenceLine,
+      '',
+      '**In short:** Define the agent category clearly, tie it to one workflow, then ask which workflow they want first.',
+      `- They are not asking for architecture yet. They are asking what kind of **${topic}** you actually mean in business terms.`,
+      `- Anchor on the workflow already in the transcript: **${workflowSummary}**, with **24/7** availability and lower cost than a purely human calling workflow [${latest?.timestamp ?? 'LIVE'}].`,
+      `- Keep the answer concrete: category first, use case second, business value third. Do not drift into generic AI language.`,
+      `> "Say: We are mainly talking about ${workflowSummary} agents that stay available 24/7, handle repetitive customer conversations, and cost less than a purely human team for that workflow. The real question is which workflow you would want to automate first."`,
+      `- [ ] Next step to lock: ask which workflow matters most for them first, then tailor the rest of the pitch to that one path.`,
+    ].join('\n')
+  }
+
   let inShort: string
   let bullets: string[]
 
@@ -74,8 +170,22 @@ function buildLocalDetailedFallback(
         openQuestion
           ? `- Open question: "${openQuestion.text}" [${openQuestion.timestamp}]`
           : `- Anchor on **${suggestionTitle}** — your most concrete fact or credential on this topic.`,
-        '- Structure: **[one clear claim]** → **[one supporting fact or example]** → **[concrete implication]**',
-        `> "Say: The key thing here is [your specific point] — and that means [concrete implication]."`,
+        category === 'definition'
+          ? '- Structure: answer what it is, then the practical way to think about it, then why it matters here.'
+          : category === 'mechanism'
+            ? '- Structure: answer as a path — input, processing, output, then the main trade-off or bottleneck.'
+            : category === 'comparison'
+              ? '- Structure: pick one comparison axis first, answer on that axis, then add nuance only if needed.'
+              : '- Structure: direct answer first, one concrete implication second, one next move third.',
+        suggestionSay
+          ? `> "Say: ${suggestionSay}"`
+          : category === 'definition'
+          ? `> "Say: Let me answer ${topic} directly: first what it is, then how to think about it practically, then why it matters here."`
+          : category === 'mechanism'
+            ? `> "Say: The clearest way to explain ${topic} is the path from input to output, plus the main trade-off that shapes the design."`
+            : category === 'comparison'
+              ? `> "Say: The cleanest way to compare ${topic} is on one axis first — quality, cost, speed, risk, or fit — then we can add nuance."`
+              : `> "Say: Let me answer that directly, then make it concrete with the one implication that matters most here."`,
         `- [ ] Next step to lock: connect this answer to ${goalClause} with a named owner and timing.`,
       ]
       break
@@ -255,6 +365,7 @@ export async function* streamDetailedAnswer(
   suggestionTitle: string,
   suggestionType: string,
   suggestionDetail: string,
+  suggestionSay: string | undefined,
   transcript: TranscriptChunk[],
   apiKey: string,
   settings: AppSettings,
@@ -290,7 +401,7 @@ export async function* streamDetailedAnswer(
     }))
   } catch (err) {
     console.error('[streamDetailedAnswer] Groq failed, using local fallback:', err)
-    yield buildLocalDetailedFallback(suggestionTitle, suggestionType, suggestionDetail, transcript, meetingContext)
+    yield buildLocalDetailedFallback(suggestionTitle, suggestionType, suggestionDetail, suggestionSay, transcript, meetingContext)
     return
   }
 

@@ -1,6 +1,25 @@
 {
   "scenarios": [
     {
+      "id": "technical-explainer-llm",
+      "name": "Open-ended technical explainer about LLMs",
+      "meetingContext": {
+        "meetingType": "Brainstorm",
+        "userRole": "Domain Expert",
+        "goal": "Give a clean, human explanation of how LLMs work without getting vague"
+      },
+      "transcript": [
+        { "timestamp": "00:00:08", "text": "What is an LLM exactly?" },
+        { "timestamp": "00:00:31", "text": "Can you explain how tokenization and embeddings fit into it, and how the model somehow understands the task and responds intelligently?" },
+        { "timestamp": "00:00:58", "text": "I do not want a buzzword answer here, I want the process explained clearly." },
+        { "timestamp": "00:01:22", "text": "Also if there is a clean way to explain training versus inference that would help." },
+        { "timestamp": "00:01:46", "text": "The goal is to make this feel human and understandable, not academic." }
+      ],
+      "mustCoverAny": ["LLM", "tokenization", "embeddings", "training", "inference", "attention", "next token"],
+      "antiPatterns": ["latest topic", "generic framework", "ask another broad question instead of answering", "placeholder scaffolds"],
+      "detailScenario": "The user clicks because they need a crisp explanation they can actually say out loud in the meeting."
+    },
+    {
       "id": "sales-objection",
       "name": "Sales call with hidden objection",
       "meetingContext": {

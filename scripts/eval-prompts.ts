@@ -523,15 +523,15 @@ function buildMultilingualDetailOverride(scenario: Scenario, suggestionType: str
   }
 
   const week1Line = coreConcern
-    ? `- **Week 1:** anchor the rollout around the buyer's stated concern — **${coreConcern.text}** [${coreConcern.timestamp}] — and make clear this is not another long migration for **ops** [${cueTimestamp}].`
-    : `- **Week 1:** anchor the rollout around the implementation-timeline concern [${timelineQuestion.timestamp}] and make clear this is not another long migration for **ops** [${cueTimestamp}].`
+    ? `- **Week 1:** run a scoped kickoff around the buyer's stated concern — **${coreConcern.text}** [${coreConcern.timestamp}] — align with **ops** on the current workflow, and make explicit what is NOT becoming another long migration this quarter [${cueTimestamp}].`
+    : `- **Week 1:** run a scoped kickoff around the implementation-timeline concern [${timelineQuestion.timestamp}], align with **ops** on the current workflow, and make explicit what is not becoming another long migration this quarter [${cueTimestamp}].`
 
   const week2Line = stallRisk
-    ? `- **Week 2:** review the first-two-weeks plan they explicitly asked for [${timelineQuestion.timestamp}] and confirm it is concrete enough that this does not **stall internally** [${stallRisk.timestamp}].`
-    : `- **Week 2:** review the first-two-weeks plan they explicitly asked for [${timelineQuestion.timestamp}] and confirm the path is concrete enough to keep momentum.`
+    ? `- **Week 2:** show the first working path, review it with **ops**, and confirm with the buyer that the rollout is concrete enough that this does not **stall internally** [${stallRisk.timestamp}].`
+    : `- **Week 2:** show the first working path, review it with **ops**, and confirm the rollout is concrete enough to keep momentum.`
 
   const stakeholderLine = financeLine
-    ? `- **Stakeholder alignment:** tie the **ops** migration concern [${cueTimestamp}] to **finance**'s why-now-vs-**Q4** question [${financeLine.timestamp}] so both objections are handled in one answer.`
+    ? `- **Stakeholder alignment:** tie the **ops** migration concern [${cueTimestamp}] to **finance**'s why-now-vs-**Q4** question [${financeLine.timestamp}] by saying the first-two-weeks plan is the proof point they can use to decide whether to prioritize this now.`
     : `- **Stakeholder alignment:** connect the **ops** migration concern [${cueTimestamp}] to the implementation answer so the room hears both execution and stakeholder safety.`
 
   const nextStepLine = financeLine
@@ -540,11 +540,11 @@ function buildMultilingualDetailOverride(scenario: Scenario, suggestionType: str
 
   return [
     `**Evidence:** ${evidenceLines.join(' ; ')} ; Spanish stakeholder concern translated: "${translatedConcern}" [${cueTimestamp}]`,
-    '**In short:** Answer the two-week plan directly, tie it to the ops migration concern, then lock the finance/ops walkthrough.',
+    '**In short:** Give the two-week rollout in sequence, tie it to the ops migration concern, then use that plan to answer the finance why-now objection.',
     week1Line,
     week2Line,
     stakeholderLine,
-    '> "Say: I hear the concern about another long migration for ops this quarter [' + cueTimestamp + ']. Here is what the first two weeks look like, and then we can test whether that is strong enough to justify doing this before ' + (financeLine ? `Q4 [${financeLine.timestamp}]` : 'it slows down internally') + '."',
+    '> "Say: I hear the concern about another long migration for ops this quarter [' + cueTimestamp + ']. Week 1 is a scoped kickoff with ops to map the current workflow and confirm what stays lightweight. Week 2 is a review of the first working path so you and finance can judge whether this is concrete enough to move before ' + (financeLine ? `Q4 [${financeLine.timestamp}]` : 'it slows down internally') + '."',
     nextStepLine,
   ].join('\n')
 }
@@ -668,8 +668,6 @@ function scoreSuggestion(suggestion: Suggestion, chunks: TranscriptChunk[], meet
   if ((meetingContext.prepNotes ?? '').toLowerCase().includes('bilingual') && /(operations|ops|finance|q4|internal approval|stall)/i.test(combinedText)) score += 0.75
 
   if (suggestion.say) score += 1.5
-  if (suggestion.whyNow) score += 1
-  if (suggestion.listenFor) score += 1
   if ((suggestion.say ?? suggestion.detail).length <= 180) score += 0.75
 
   return score

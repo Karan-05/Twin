@@ -111,6 +111,97 @@ export default function MeetingRoom() {
     }
   }
 
+  const requestTranscriptFlush = async () => {
+    if (!isRecording) return
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        window.removeEventListener('meeting-copilot:transcript-flushed', handleDone as EventListener)
+        reject(new Error('Transcript refresh timed out'))
+      }, 15_000)
+
+      const handleDone = (event: Event) => {
+        const detail = (event as CustomEvent<{ requestId: string; error?: string }>).detail
+        if (detail?.requestId !== requestId) return
+
+        window.clearTimeout(timeout)
+        window.removeEventListener('meeting-copilot:transcript-flushed', handleDone as EventListener)
+
+        if (detail.error) {
+          reject(new Error(detail.error))
+          return
+        }
+
+        resolve()
+      }
+
+      window.addEventListener('meeting-copilot:transcript-flushed', handleDone as EventListener)
+      window.dispatchEvent(
+        new CustomEvent('meeting-copilot:flush-transcript', {
+          detail: { requestId },
+        })
+      )
+    })
+  }
+
+  const requestStopRecording = async () => {
+    if (!isRecording) return
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        window.removeEventListener('meeting-copilot:recording-stopped', handleDone as EventListener)
+        reject(new Error('Stop recording timed out'))
+      }, 20_000)
+
+      const handleDone = (event: Event) => {
+        const detail = (event as CustomEvent<{ requestId: string; error?: string }>).detail
+        if (detail?.requestId !== requestId) return
+
+        window.clearTimeout(timeout)
+        window.removeEventListener('meeting-copilot:recording-stopped', handleDone as EventListener)
+
+        if (detail.error) {
+          reject(new Error(detail.error))
+          return
+        }
+
+        resolve()
+      }
+
+      window.addEventListener('meeting-copilot:recording-stopped', handleDone as EventListener)
+      window.dispatchEvent(
+        new CustomEvent('meeting-copilot:stop-recording', {
+          detail: { requestId },
+        })
+      )
+    })
+  }
+
+  const handleExport = async () => {
+    await requestTranscriptFlush().catch(() => {})
+    const latestState = useMeetingStore.getState()
+    exportSession(
+      latestState.transcript,
+      latestState.suggestionBatches,
+      latestState.messages,
+      latestState.sessionTitle,
+      latestState.meetingContext,
+      latestState.intelligenceSummary,
+      latestState.sessionStartTime,
+      latestState.settings,
+      latestState.liveTranscriptPreview
+    )
+  }
+
+  const handleOpenSettings = async () => {
+    await requestStopRecording().catch(() => {})
+    router.push('/settings')
+  }
+
   return (
     <div className="flex flex-col h-screen bg-surface-primary">
       {/* Top nav — 52px */}
@@ -161,7 +252,7 @@ export default function MeetingRoom() {
           )}
           <button
             type="button"
-            onClick={() => exportSession(transcript, suggestionBatches, messages, sessionTitle, meetingContext, intelligenceSummary, sessionStartTime, settings)}
+            onClick={() => { void handleExport() }}
             className="p-2 text-text-muted hover:text-text-primary hover:bg-surface-secondary rounded-lg transition-colors"
             title="Export JSON"
             aria-label="Export meeting session as JSON"
@@ -170,7 +261,7 @@ export default function MeetingRoom() {
           </button>
           <button
             type="button"
-            onClick={() => router.push('/settings')}
+            onClick={() => { void handleOpenSettings() }}
             className="p-2 text-text-muted hover:text-text-primary hover:bg-surface-secondary rounded-lg transition-colors"
             title="Settings"
             aria-label="Open settings"

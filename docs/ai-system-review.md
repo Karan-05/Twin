@@ -14,7 +14,7 @@ This project is intentionally optimized for the assignment: high-quality live su
 
 - **Deterministic pre-processing before LLM calls**: the app extracts recent questions, numeric claims, commitments, blockers, deadlines, loop signals, and likely topics before suggestion/chat generation.
 - **Compact meeting-state memory**: a lightweight session state tracks the current question, blocker, risky claim, decision focus, stakeholders, and loop status so prompts operate on state plus delta, not raw transcript alone.
-- **Internal candidate reranking**: the system can over-generate ideas, score them for urgency, specificity, role fit, and speakability, then surface the best 3 to the user.
+- **Lightweight reranking**: the system still scores suggestions for urgency, specificity, role fit, and speakability, but the live prompt now aims to return the final 3 directly instead of leaning on heavy over-generation.
 - **Separation of fast and slow loops**: transcript + suggestions run on the live loop; intelligence extraction runs on a slower background loop.
 - **Memory isolation**: prior-session memory is injected as a separate context block instead of contaminating the raw transcript.
 - **Guardrails over autonomy**: the system does not blindly act; it recommends the next best move while keeping the user in control.

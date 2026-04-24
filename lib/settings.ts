@@ -33,7 +33,7 @@ Read the [JUST SAID] line carefully. Identify:
 - Is something ambiguous that will cause problems if left undefined?
 - What is the single biggest leverage point for {user_role} RIGHT NOW?
 
-## Generate exactly 6 candidate suggestions using these types:
+## Generate exactly 3 final suggestions using these types:
 - "question"      — ask this NOW to unlock critical information or expose an assumption
 - "talking_point" — contribute this fact, number, or perspective to shift the conversation
 - "answer"        — direct answer to a question just asked (cite transcript evidence)
@@ -41,12 +41,12 @@ Read the [JUST SAID] line carefully. Identify:
 - "clarification" — something that WILL cause problems downstream if not defined now
 
 ## Batch strategy
-- These 6 are candidate suggestions; another ranking layer will pick the top 3. Make every candidate distinct and high-leverage.
-- Across the strongest candidates, prefer at least 2 different types when the transcript supports it.
+- Return 3 final suggestions only. Make each one distinct and high-leverage.
+- Across the 3 suggestions, prefer at least 2 different types when the transcript supports it.
 - Prioritise in this order: unanswered question > risky claim > hidden blocker/ambiguity > leverage talking point.
 - At least 1 suggestion should be immediately speakable: something the participant can say almost verbatim in the next 10 seconds.
 - If the meeting is drifting, one suggestion may re-anchor the conversation to the user's goal.
-- Silently spread the 6 candidates across distinct jobs whenever the transcript supports it: (1) answer/reframe the current question, (2) surface the blocker or hidden stakeholder concern, (3) lock a next step / owner / decision, (4) fact-check the risky claim, (5) re-anchor to the user's goal, (6) strongest spare move. Do not let more than 2 candidates attack the same job unless the transcript is genuinely one-dimensional.
+- Silently spread the 3 suggestions across distinct jobs whenever the transcript supports it: (1) answer/reframe the current question, (2) surface the blocker or hidden stakeholder concern, (3) lock a next step / owner / decision, (4) fact-check the risky claim, (5) re-anchor to the user's goal. Do not let more than 1 suggestion attack the same job unless the transcript is genuinely one-dimensional.
 - Use the conversation-signals section as a deterministic hint, not as a replacement for reading the transcript.
 - Use the decision-scaffolding section to rank moves, choose the right mix of suggestion types, and avoid generic advice.
 - If the recent transcript contains a direct question to the participant, at least one suggestion MUST help answer it directly. In that case, suggestion #1 should usually be type="answer" or type="talking_point", not another question.
@@ -133,6 +133,7 @@ Mandatory for Sales Call, Investor Pitch, Job Interview, and Board Meeting:
 
 Extra requirement for Sales Call detail answers under timeline pressure:
 - If the transcript includes implementation timing plus stakeholder resistance, include one bullet for the phased plan and one bullet for stakeholder alignment (ops / finance / approval path) before the final next step.
+- If the buyer explicitly asks what the first two weeks look like, one bullet must start with "**Week 1:**" and one must start with "**Week 2:**". These bullets must name the concrete meeting/workflow actions in sequence, not just say "be clear" or "keep momentum".
 
 Hard cap: 200 words. Every word must earn its place.`
 
@@ -222,7 +223,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   liveSuggestionPrompt: DEFAULT_LIVE_SUGGESTION_PROMPT,
   clickDetailPrompt: DEFAULT_CLICK_DETAIL_PROMPT,
   chatSystemPrompt: DEFAULT_CHAT_SYSTEM_PROMPT,
-  suggestionContextWindow: 4,
+  suggestionContextWindow: 6,
   detailContextWindow: 8,
 }
 
