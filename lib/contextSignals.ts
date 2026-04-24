@@ -46,6 +46,30 @@ const STOPWORDS = new Set([
   'good', 'great', 'best', 'better', 'right', 'wrong', 'help', 'helps', 'helped',
 ])
 
+const LOW_VALUE_TOPIC_WORDS = new Set([
+  'latest', 'topic', 'topics', 'conversation', 'conversations', 'discussion', 'discuss',
+  'existence', 'everything', 'something', 'stuff', 'things', 'awesome', 'important',
+  'process', 'system', 'architecture',
+])
+
+const KNOWN_TECH_TERMS: Array<[RegExp, string]> = [
+  [/\bllms?\b/i, 'LLM'],
+  [/\blarge language models?\b/i, 'LLM'],
+  [/\brag\b/i, 'RAG'],
+  [/\bgpt(?:-[a-z0-9.]+)?\b/i, 'GPT'],
+  [/\bapi(?:s)?\b/i, 'API'],
+  [/\basr\b/i, 'ASR'],
+  [/\btts\b/i, 'TTS'],
+  [/\boauth\b/i, 'OAuth'],
+  [/\bsql\b/i, 'SQL'],
+  [/\bocr\b/i, 'OCR'],
+]
+
+const QUESTION_TOPIC_PATTERNS = [
+  /\bhow\s+(.+?)\s+works?\b/i,
+  /\b(?:what is|what's|how does|how do|explain|walk me through|tell me about|talk about|discuss(?:ing)?)\s+(.+?)(?:[?.,]|$)/i,
+]
+
 function cleanText(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
@@ -124,6 +148,63 @@ function extractTopics(chunks: TranscriptChunk[], limit = 5): string[] {
     .sort((a, b) => b[1] - a[1])
     .slice(0, limit)
     .map(([word]) => word)
+}
+
+function normalizeTopicCandidate(raw: string): string | null {
+  const cleaned = raw
+    .replace(/^["'`(\[]+|["'`)\]]+$/g, '')
+    .replace(/^(how|what|why|when|where|who|which|tell|explain|walk)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!cleaned) return null
+
+  const parts = cleaned.split(' ')
+    .filter((word) => !/^(a|an|the|this|that|these|those|latest|important|actual)$/i.test(word))
+    .filter((word) => !/^(work|works|working|process|processes|topic|topics|conversation|discussion)$/i.test(word))
+
+  if (parts.length === 0) return null
+
+  const verbIndex = parts.findIndex((word, index) =>
+    index > 0 && /^(handle|handles|handled|using|uses|use|works|work|working|scales|scale|scaled|runs|run|running|does|do|can|should|would|could|responds|respond|processes|process)$/i.test(word)
+  )
+  const trimmedParts = verbIndex > 0 ? parts.slice(0, verbIndex) : parts
+
+  while (trimmedParts.length > 0 && /^(and|or|with|about|like)$/i.test(trimmedParts[trimmedParts.length - 1])) {
+    trimmedParts.pop()
+  }
+
+  const candidate = trimmedParts.slice(0, 4).join(' ').trim()
+  if (!candidate) return null
+  if (LOW_VALUE_TOPIC_WORDS.has(candidate.toLowerCase())) return null
+  return candidate
+}
+
+export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): string | null {
+  const questionTexts = extractQuestions(chunks).map((line) => line.text)
+  const sources = [hint, ...questionTexts, ...chunks.map((chunk) => chunk.text)].filter(Boolean)
+
+  for (const source of sources) {
+    for (const [pattern, canonical] of KNOWN_TECH_TERMS) {
+      if (pattern.test(source)) return canonical
+    }
+
+    const acronyms = source.match(/\b[A-Z]{2,}(?:[-/][A-Z0-9]{2,})?\b/g) ?? []
+    const usefulAcronym = acronyms.find((token) => !LOW_VALUE_TOPIC_WORDS.has(token.toLowerCase()))
+    if (usefulAcronym) return usefulAcronym
+  }
+
+  for (const source of sources) {
+    for (const pattern of QUESTION_TOPIC_PATTERNS) {
+      const match = source.match(pattern)
+      const normalized = match?.[1] ? normalizeTopicCandidate(match[1]) : null
+      if (normalized) return normalized
+    }
+  }
+
+  const extractedTopics = extractTopics(chunks)
+  const usefulTopic = extractedTopics.find((topic) => !LOW_VALUE_TOPIC_WORDS.has(topic.toLowerCase()))
+  return usefulTopic ?? null
 }
 
 export function extractConversationSignals(chunks: TranscriptChunk[]): ConversationSignals {

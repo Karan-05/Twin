@@ -3,7 +3,7 @@ import { generateId, formatTimestamp } from './utils'
 import { withRetry } from './retry'
 import type { Suggestion, SuggestionBatch, TranscriptChunk, MeetingContext } from './store'
 import type { AppSettings } from './settings'
-import { buildConversationSignalsSection, extractConversationSignals } from './contextSignals'
+import { buildConversationSignalsSection, extractConversationSignals, extractPrimaryTopic } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import type { MeetingState } from './meetingState'
 import { buildMeetingStateSection } from './meetingState'
@@ -490,7 +490,7 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
   const latest = recentChunks[recentChunks.length - 1]
   const fallbacks: Suggestion[] = []
 
-  const rawPrimary = topicLabels[0] || signals.topics[0] || ''
+  const rawPrimary = extractPrimaryTopic(recentChunks) || topicLabels[0] || signals.topics[0] || ''
   const primaryTopic = rawPrimary.length >= 4 ? rawPrimary : 'latest topic'
   const comparisonSet = topicLabels.slice(0, 4)
   const comparisonText = comparisonSet.length > 1 ? comparisonSet.join(', ') : primaryTopic
@@ -504,13 +504,48 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
 
     if (TECHNICAL_RE.test(rawText)) {
       const topic = primaryTopic || 'the system'
+      const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${rawText}`)
+
+      if (llmLike) {
+        fallbacks.push({
+          id: generateId(),
+          type: 'answer',
+          title: 'Explain how an LLM works',
+          detail: `They asked: "${question.text}" [${question.timestamp}]. Walk through the runtime path in order: text is tokenized, tokens become embeddings, transformer attention layers build context across the sequence, and the model predicts the next token repeatedly until it forms the answer.`,
+          say: `An LLM first tokenizes the input, maps those tokens to embeddings, runs transformer attention layers to build context, and then predicts the next token repeatedly until the response is complete.`,
+          whyNow: 'This is a direct technical question, so a concrete runtime explanation is more useful than a generic framework.',
+          listenFor: 'Whether they want the training story next, or a deeper dive on embeddings, attention, or decoding.',
+        })
+
+        fallbacks.push({
+          id: generateId(),
+          type: 'talking_point',
+          title: 'Separate tokens from embeddings',
+          detail: `Tokenization and embeddings are not the same step. Tokenization breaks text into units the model can process; embeddings turn each token into a vector so attention layers can compare meaning and context across the sequence.`,
+          say: `Tokenization chops the text into model-sized pieces, and embeddings turn those pieces into vectors the transformer can reason over — that separation is the key thing to explain clearly.`,
+          whyNow: 'People often blur these two steps together, which makes the explanation feel fuzzy fast.',
+          listenFor: 'Whether they are asking about the runtime path, or they actually want training internals and representation learning.',
+        })
+
+        fallbacks.push({
+          id: generateId(),
+          type: 'question',
+          title: 'Clarify training vs inference',
+          detail: `Ask whether they want the training story or the runtime inference path. Training is large-scale next-token prediction over huge corpora; inference is the live loop that predicts one token at a time using the trained weights.`,
+          say: `Do you want the training story, or the runtime inference path from prompt to generated answer? That changes the explanation a lot.`,
+          whyNow: 'That one split keeps the answer sharp instead of mixing two different layers of the system.',
+          listenFor: 'Whether they care more about model learning, or about how a prompt becomes a live answer.',
+        })
+
+        return sanitizeSuggestions(fallbacks)
+      }
 
       fallbacks.push({
         id: generateId(),
         type: 'answer',
         title: `Explain ${compactTopic(topic)} architecture`,
-        detail: `They asked: "${question.text}" [${question.timestamp}]. Walk through in order: (1) core components of ${topic}, (2) the main production challenge, (3) one concrete proof point from your experience.`,
-        say: `Here's how ${topic} works: [core components] — the production challenge most teams hit is [main bottleneck], and the fix is [your real approach].`,
+        detail: `They asked: "${question.text}" [${question.timestamp}]. Walk through in order: (1) the input path, (2) the core processing loop, (3) the output path, and (4) the main production bottleneck that shapes the design.`,
+        say: `I'd explain ${topic} in four parts: input, core processing, output, and the main production bottleneck that drives the real trade-offs.`,
         whyNow: 'A direct technical question just landed — architecture first, trade-offs second, proof third.',
         listenFor: 'Whether they want depth on a specific component, the trade-offs, or your hands-on experience.',
       })
@@ -639,14 +674,48 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
 
     if (TECHNICAL_RE_BROAD.test(rawTextAll)) {
       const topic = primaryTopic || 'the system'
+      const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${rawTextAll}`)
+
+      if (llmLike) {
+        fallbacks.push(
+          {
+            id: generateId(),
+            type: 'answer',
+            title: 'Explain how an LLM works',
+            detail: `Walk through the runtime path clearly: tokenization, embeddings, transformer attention, then next-token decoding. That sequence answers most "how does an LLM work?" questions much better than abstract AI language.`,
+            say: `An LLM tokenizes the input, converts tokens into embeddings, runs attention across the sequence to build context, and then predicts the next token repeatedly until it completes the answer.`,
+            whyNow: 'This is a technical explainer moment, so the concrete runtime path is the highest-value move.',
+            listenFor: 'Whether they want to go deeper on embeddings, attention, or the training loop next.',
+          },
+          {
+            id: generateId(),
+            type: 'talking_point',
+            title: 'Separate tokenization from meaning',
+            detail: `Make the distinction explicit: tokenization is text segmentation, embeddings are learned numerical representations, and attention is what mixes context across the sequence. That clears up where the model's "sense of the task" actually comes from.`,
+            say: `The model doesn't understand first and answer later — context emerges because attention layers keep updating the token representations as the sequence is processed.`,
+            whyNow: 'That distinction is where most fuzzy explanations go wrong.',
+            listenFor: 'Whether they are actually confused about embeddings, or about the transformer inference loop more broadly.',
+          },
+          {
+            id: generateId(),
+            type: 'question',
+            title: 'Clarify training vs inference',
+            detail: `Ask whether they want the offline training process or the live inference path. Those are related but different explanations, and mixing them is what usually makes the answer muddy.`,
+            say: `Do you want the training explanation, or the inference path from prompt to generated answer?`,
+            whyNow: 'That keeps the explanation clean instead of blending two different system layers.',
+            listenFor: 'Which part of the stack they actually care about next.',
+          }
+        )
+        return sanitizeSuggestions(fallbacks)
+      }
 
       fallbacks.push(
         {
           id: generateId(),
           type: 'answer',
           title: `Explain ${compactTopic(topic)} architecture`,
-          detail: `Walk through in order: (1) core components of ${topic}, (2) the main production challenge, (3) one concrete proof point. Architecture first, trade-offs second, proof third.`,
-          say: `Here's how ${topic} works: [core components] — the production challenge most teams hit is [main bottleneck], and the fix is [your real approach].`,
+          detail: `Walk through in order: the input path, the core processing loop, the output path, and the main production bottleneck. Architecture first, trade-offs second, proof third.`,
+          say: `I'd explain ${topic} as input, core processing, output, and the main bottleneck that changes the design trade-offs.`,
           whyNow: 'There is a technical question in the conversation — the architecture framework is the right opening move.',
           listenFor: 'Whether they want depth on a specific component, the trade-offs, or your hands-on experience.',
         },

@@ -2,7 +2,7 @@ import Groq from 'groq-sdk'
 import type { ChatCompletionMessageParam } from 'groq-sdk/resources/chat/completions'
 import type { Message, TranscriptChunk, MeetingContext } from './store'
 import type { AppSettings } from './settings'
-import { buildConversationSignalsSection, extractConversationSignals } from './contextSignals'
+import { buildConversationSignalsSection, extractConversationSignals, extractPrimaryTopic } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import { buildMeetingStateSection, deriveMeetingState } from './meetingState'
 import { withGroqTextBudget } from './groqBudget'
@@ -20,8 +20,22 @@ function buildLocalChatFallback(
 ): string {
   const signals = extractConversationSignals(transcript.slice(-8))
   const latest = transcript[transcript.length - 1]
-  const topic = signals.topics.slice(0, 2).join(' / ') || meetingContext.goal || 'current topic'
+  const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${userMessage}`) || signals.topics.slice(0, 2).join(' / ') || meetingContext.goal || 'current topic'
   const question = signals.questions[0]
+  const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${userMessage} ${question?.text ?? ''}`)
+
+  if (llmLike) {
+    return [
+      '**In short:** Explain the runtime path clearly: **tokenization -> embeddings -> transformer attention -> next-token decoding**.',
+      question ? `- Open question: "${question.text}" [${question.timestamp}]` : `- Topic: **${topic}**`,
+      '- Tokenization splits the input text into model-sized tokens.',
+      '- Embeddings turn those tokens into vectors, and positional information preserves order.',
+      '- Transformer self-attention layers update each token representation using the surrounding context.',
+      '- Decoding picks the next token repeatedly until the model reaches a stopping point.',
+      '> "Say: An LLM tokenizes the prompt, maps tokens to embeddings, runs attention over the sequence, and predicts the next token repeatedly until the answer is complete."',
+      '- Groq is temporarily rate-limited, so this is a local technical fallback.',
+    ].join('\n')
+  }
 
   const lines = [
     '**In short:** Use the latest thread to move the conversation on **' + topic + '** right now.',
@@ -53,6 +67,8 @@ function buildLocalDetailedFallback(
   const riskyItem = signals.numericClaims[0] || signals.risks[0]
   const commitment = signals.commitments[0]
   const goalClause = meetingContext.goal ? `**${meetingContext.goal}**` : 'your stated goal'
+  const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${suggestionTitle}`) || 'current topic'
+  const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`)
 
   const anchor =
     suggestionType === 'answer' || suggestionType === 'question' ? openQuestion ?? latest
@@ -63,6 +79,20 @@ function buildLocalDetailedFallback(
   const evidenceLine = anchor
     ? `**Evidence:** "${anchor.text}" [${anchor.timestamp}]`
     : '**Evidence:** Thin transcript — using suggestion framing.'
+
+  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && llmLike) {
+    return [
+      evidenceLine,
+      '',
+      '**In short:** Explain the runtime path: **tokenization -> embeddings -> transformer attention -> next-token decoding**.',
+      '- Tokenization breaks the input text into tokens the model can process.',
+      '- Embeddings convert those tokens into vectors, and positional information preserves order in the sequence.',
+      '- Transformer attention layers update each token representation using the surrounding context, which is where the model gets contextual understanding.',
+      '- Decoding then chooses one token at a time until the answer is complete; training is the earlier process that taught those weights what token patterns are likely.',
+      '> "Say: An LLM tokenizes the prompt, maps tokens into embeddings, runs attention over the sequence to build context, and then predicts the next token repeatedly until the full answer is formed."',
+      '- [ ] Next step to lock: ask whether they want the training loop next, or a deeper dive on embeddings versus attention.',
+    ].join('\n')
+  }
 
   let inShort: string
   let bullets: string[]

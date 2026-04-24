@@ -119,6 +119,32 @@ assert(
 )
 
 // ---------------------------------------------------------------------------
+// Scenario 5: LLM question — no "latest topic" collapse
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 5] LLM question — preserves the actual topic and gives concrete content')
+
+const llmChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:05:00', text: 'What is LLM ??' },
+  { id: '2', timestamp: '00:05:10', text: 'So yeah how does an LLM actually work with tokenization and embeddings and how does it respond intelligently' },
+]
+
+const llmSuggestions = buildFallbackSuggestions(llmChunks)
+
+assert(llmSuggestions.length === 3, 'returns 3 suggestions')
+assert(
+  llmSuggestions.some((s) => /llm/i.test(s.title)),
+  `at least one title references "LLM" (got: ${llmSuggestions.map(s => s.title).join(' | ')})`
+)
+assert(
+  llmSuggestions.some((s) => /tokeniz|embedding|attention|next token/i.test(s.say)),
+  `at least one 'say' includes concrete LLM mechanics`
+)
+assert(
+  !llmSuggestions.some((s) => /latest topic/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `does not collapse the subject to "latest topic"`
+)
+
+// ---------------------------------------------------------------------------
 // Results
 // ---------------------------------------------------------------------------
 console.log(`\n${'─'.repeat(50)}`)
