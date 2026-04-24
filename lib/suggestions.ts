@@ -50,6 +50,10 @@ const TOPIC_LABEL_STOPWORDS = new Set([
   'part', 'parts', 'side', 'time', 'times', 'type', 'types', 'way', 'ways',
   'place', 'case', 'cases', 'fact', 'facts', 'area', 'areas', 'level', 'levels',
   'data', 'note', 'notes', 'step', 'steps', 'word', 'words', 'line', 'lines',
+  // adjectives/adverbs that shouldn't be standalone topic labels
+  'real', 'always', 'never', 'every', 'human', 'based', 'available', 'working',
+  'actual', 'entire', 'general', 'certain', 'specific', 'different', 'important',
+  'large', 'small', 'long', 'short', 'high', 'able', 'using', 'used',
 ])
 
 function extractTopicLabels(chunks: TranscriptChunk[]): string[] {
@@ -488,7 +492,8 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
   const latest = recentChunks[recentChunks.length - 1]
   const fallbacks: Suggestion[] = []
 
-  const primaryTopic = topicLabels[0] || signals.topics[0] || 'latest topic'
+  const rawPrimary = topicLabels[0] || signals.topics[0] || ''
+  const primaryTopic = rawPrimary.length >= 4 ? rawPrimary : 'latest topic'
   const comparisonSet = topicLabels.slice(0, 4)
   const comparisonText = comparisonSet.length > 1 ? comparisonSet.join(', ') : primaryTopic
 
@@ -496,7 +501,7 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
     const question = signals.questions[0]
     const hasShortlist = comparisonSet.length >= 2
 
-    const TECHNICAL_RE = /how (does|do|can|to)|architect|pipeline|scale|real.?time|latency|hallucin|production|inference|accuracy|model|deploy|securi|api\b|integrat|implement|design\b|work\b/i
+    const TECHNICAL_RE = /how (does|do|can|to)|architect|pipeline|scale|real.?time|latency|hallucin|production|inference|accuracy|model|deploy|securi|api\b|integrat|implement/i
     const rawText = [question.text, ...recentChunks.map((c) => c.text)].join(' ')
 
     if (TECHNICAL_RE.test(rawText)) {

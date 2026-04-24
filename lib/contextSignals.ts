@@ -25,7 +25,8 @@ const INDIRECT_QUESTION_RE = /^(?:(?:so|hey|well|um|uh|and|but|also|okay|right|y
 
 const COMMITMENT_PATTERN = /\b(will|i'll|we'll|going to|next step|follow up|send|share|deliver|commit|owner|deadline|by\s+(monday|tuesday|wednesday|thursday|friday|tomorrow|next week|end of day|eod|q[1-4]))\b/i
 const RISK_PATTERN = /\b(not sure|unsure|maybe|depends|blocked|blocker|risk|concern|issue|problem|later|eventually|someday|hard|difficult|can't|cannot|won't|similar|nice to have|budget|timeline|approval)\b/i
-const NUMBER_PATTERN = /(?:\$|€|£|¥)?\b\d+(?:[.,]\d+)?\s*(?:%|percent|k|m|b|million|billion|days?|weeks?|months?|years?)?\b/i
+// Requires either a currency prefix OR a meaningful unit — bare numbers like "24 7" (24/7) don't qualify
+const NUMBER_PATTERN = /(?:(?:\$|€|£|¥)\s*\d[\d,.]*|\b\d[\d,.]*\s*(?:%|percent|x\b|million|billion|k\b|m\b|b\b|days?|weeks?|months?|years?|hrs?|hours?|minutes?|seconds?|ms\b))\b/i
 const MULTILINGUAL_PATTERN = /[^\x00-\x7F]|\b(sí|si|porque|equipo|operaciones|trimestre|gracias|hola|vale|pero|también|tambien|necesita|necesitamos|migraci[oó]n|largo|larga)\b/i
 
 const STOPWORDS = new Set([
@@ -35,7 +36,14 @@ const STOPWORDS = new Set([
   'will', 'just', 'said', 'says', 'also', 'only', 'really', 'very', 'more', 'most', 'much', 'many',
   'some', 'like', 'kind', 'sort', 'need', 'want', 'make', 'made', 'does', 'doing', 'did', 'done',
   'can', 'cant', 'cannot', 'not', 'yes', 'yeah', 'okay', 'well', 'right', 'maybe', 'into', 'over',
-  'under', 'than', 'after', 'before', 'because', 'through', 'across', 'around', 'meeting', 'call'
+  'under', 'than', 'after', 'before', 'because', 'through', 'across', 'around', 'meeting', 'call',
+  // adjectives, adverbs, common verbs that pollute topic extraction in sales/marketing speech
+  'real', 'time', 'new', 'always', 'never', 'every', 'human', 'based', 'available', 'working',
+  'provide', 'provided', 'provides', 'tell', 'told', 'here', 'come', 'coming', 'give', 'given',
+  'look', 'looking', 'goes', 'going', 'gets', 'getting', 'take', 'taking', 'keep', 'keeping',
+  'actual', 'entire', 'general', 'certain', 'specific', 'different', 'important', 'possible',
+  'large', 'small', 'long', 'short', 'high', 'able', 'using', 'used', 'use', 'work', 'works',
+  'good', 'great', 'best', 'better', 'right', 'wrong', 'help', 'helps', 'helped',
 ])
 
 function cleanText(text: string): string {
@@ -101,7 +109,7 @@ function extractTopics(chunks: TranscriptChunk[], limit = 5): string[] {
   const scores = new Map<string, number>()
 
   chunks.forEach((chunk, chunkIndex) => {
-    const weight = chunkIndex === chunks.length - 1 ? 3 : 1
+    const weight = chunkIndex === chunks.length - 1 ? 2 : 1
     const words = cleanText(chunk.text)
       .toLowerCase()
       .match(/[a-z][a-z0-9_-]{2,}/g) ?? []
