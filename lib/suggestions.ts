@@ -496,54 +496,40 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
     const question = signals.questions[0]
     const hasShortlist = comparisonSet.length >= 2
 
-    const TECHNICAL_RE = /how (does|do|can|to)|architecture|pipeline|scale|real.?time|latency|hallucin|production|voice.?ai|speech|transcri|asr|stt|tts|llm|inference|accuracy|model|deploy|securi|api\b|integrat/i
+    const TECHNICAL_RE = /how (does|do|can|to)|architect|pipeline|scale|real.?time|latency|hallucin|production|inference|accuracy|model|deploy|securi|api\b|integrat|implement|design\b|work\b/i
     const rawText = [question.text, ...recentChunks.map((c) => c.text)].join(' ')
 
     if (TECHNICAL_RE.test(rawText)) {
-      const isVoiceAI = /voice.?ai|speech|transcri|asr|stt|tts|spoken/i.test(rawText)
-      const isHallucination = /hallucin|reliable|accurate|wrong|confabul/i.test(rawText)
-      const isScaling = /scale|million|concurrent|users|latency|throughput|traffic/i.test(question.text)
+      const topic = primaryTopic || 'the system'
 
       fallbacks.push({
         id: generateId(),
         type: 'answer',
-        title: isVoiceAI ? 'Voice AI pipeline: ASR → LLM → TTS' : 'Explain the technical architecture',
-        detail: `They asked: "${question.text}" [${question.timestamp}]. ${isVoiceAI ? 'The pipeline is ASR (speech-to-text) → LLM (reasoning) → TTS (text-to-speech). Production systems stream all three in parallel to achieve sub-500ms end-to-end latency.' : 'Outline the key components, the main production bottleneck, and one concrete proof point.'}`,
-        say: isVoiceAI
-          ? `Voice AI runs a three-stage pipeline: ASR converts speech to text, the LLM reasons and generates a response, then TTS speaks it back. The production trick is streaming all three in parallel — that's how you hit end-to-end latency under 500ms.`
-          : `The architecture consists of [key components] — the main production challenge is [specific bottleneck], which we address by [your real approach].`,
-        whyNow: 'A direct technical question just landed — give the architecture framework immediately, then offer to go deeper on any stage.',
-        listenFor: 'Whether they want depth on a specific component, latency tradeoffs, or hands-on war stories.',
+        title: `Explain ${compactTopic(topic)} architecture`,
+        detail: `They asked: "${question.text}" [${question.timestamp}]. Walk through in order: (1) core components of ${topic}, (2) the main production challenge, (3) one concrete proof point from your experience.`,
+        say: `Here's how ${topic} works: [core components] — the production challenge most teams hit is [main bottleneck], and the fix is [your real approach].`,
+        whyNow: 'A direct technical question just landed — architecture first, trade-offs second, proof third.',
+        listenFor: 'Whether they want depth on a specific component, the trade-offs, or your hands-on experience.',
       })
 
       fallbacks.push({
         id: generateId(),
         type: 'talking_point',
-        title: isHallucination
-          ? 'RAG + confidence threshold prevents hallucination'
-          : isVoiceAI ? 'ASR accuracy is the real production bottleneck' : 'Name the biggest production challenge',
-        detail: isHallucination
-          ? `RAG (retrieval-augmented generation) grounds the model on verified sources; a confidence threshold routes low-confidence outputs to a human or safe fallback instead of generating a wrong answer.`
-          : isVoiceAI
-            ? `ASR word error rate on domain-specific vocabulary is the main bottleneck in production. Mitigations: fine-tune on domain data, add a custom hot-words/vocab layer, or apply an LLM post-processing correction step.`
-            : `Every production system has one dominant bottleneck — naming it precisely separates credible technical answers from textbook ones.`,
-        say: isHallucination
-          ? `The two main levers against hallucination are RAG — so the model only answers from verified sources — and a confidence threshold that routes uncertain outputs to a human or a safe fallback instead of guessing.`
-          : isVoiceAI
-            ? `The real challenge in production is ASR accuracy on specialized vocabulary. The fix is either fine-tuning on domain data or adding a hot-words layer — generic ASR models miss a lot of domain terms.`
-            : `The main production bottleneck here is [specific challenge] — here's how we addressed it: [your real example and outcome].`,
-        whyNow: 'Production specifics separate credible technical answers from surface-level textbook overviews.',
-        listenFor: 'Whether they push back on the bottleneck you named — that reveals their own hands-on system experience.',
+        title: `Name ${compactTopic(topic)}'s production bottleneck`,
+        detail: `Every system has one dominant production challenge. For ${topic} it could be latency, consistency, throughput, accuracy, or operational complexity — naming it precisely separates a credible answer from a textbook one.`,
+        say: `The main production challenge with ${topic} is [specific bottleneck] — here's how we addressed it: [your real example and outcome].`,
+        whyNow: 'Production specifics separate hands-on experience from surface-level knowledge.',
+        listenFor: 'Whether they push back on the bottleneck you named — that reveals their own depth with the system.',
       })
 
       fallbacks.push({
         id: generateId(),
         type: 'question',
-        title: isScaling ? 'Pin concurrent users and latency target' : 'Clarify scale and latency requirements',
-        detail: `Concurrent users and acceptable end-to-end latency change the architecture significantly — batch GPU inference, streaming, and edge deployment look very different at 100 vs. 1M users.`,
-        say: `What scale are you targeting — and is there a latency SLA, like sub-500ms end-to-end? Those two numbers change the whole architecture.`,
-        whyNow: 'Scale and latency requirements determine the entire system design — clarifying them prevents wasted explanation.',
-        listenFor: 'Concrete numbers (user count, latency budget) that let you tailor the technical depth to what actually matters.',
+        title: `Clarify ${compactTopic(topic)} scale and constraints`,
+        detail: `Architecture decisions for ${topic} change significantly at different scales — what works at 100 users can break at 1M, and latency vs. consistency trade-offs depend entirely on the use case.`,
+        say: `What scale and constraints are you targeting with ${topic} — latency budget, consistency requirements, throughput? Those shape the whole design.`,
+        whyNow: 'Scale and constraints determine the architecture — clarifying them focuses the technical discussion.',
+        listenFor: 'Concrete numbers and requirements that let you tailor the technical depth to what actually matters.',
       })
 
       return sanitizeSuggestions(fallbacks)
@@ -646,51 +632,38 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
 
   if (fallbacks.length === 0) {
     const rawTextAll = recentChunks.map((c) => c.text).join(' ')
-    const TECHNICAL_RE_BROAD = /how (does|do|can|to)|architecture|pipeline|scale|real.?time|latency|hallucin|voice.?ai|speech|transcri|asr|stt|tts|llm|inference|accuracy|model|deploy|securi/i
+    const TECHNICAL_RE_BROAD = /how (does|do|can|to)|architect|pipeline|scale|real.?time|latency|hallucin|production|inference|accuracy|model|deploy|securi|implement|design\b/i
 
     if (TECHNICAL_RE_BROAD.test(rawTextAll)) {
-      const isVoiceAI = /voice.?ai|speech|transcri|asr|stt|tts|spoken/i.test(rawTextAll)
-      const isHallucination = /hallucin|reliable|accurate|wrong|confabul/i.test(rawTextAll)
+      const topic = primaryTopic || 'the system'
 
       fallbacks.push(
         {
           id: generateId(),
           type: 'answer',
-          title: isVoiceAI ? 'Voice AI pipeline: ASR → LLM → TTS' : 'Explain the technical architecture',
-          detail: isVoiceAI
-            ? `The pipeline is ASR (speech-to-text) → LLM (reasoning) → TTS (text-to-speech). Production systems stream all three stages in parallel to achieve sub-500ms end-to-end latency. The accuracy bottleneck is typically ASR on domain-specific vocabulary.`
-            : `Outline the key components and the main production bottleneck — answer the architecture first, then offer to go deeper on any specific stage.`,
-          say: isVoiceAI
-            ? `Voice AI runs a three-stage pipeline: ASR converts speech to text, the LLM reasons and responds, then TTS speaks it back. The trick in production is streaming all three in parallel to get end-to-end latency under 500ms.`
-            : `The architecture is [key components] — the main production challenge is [specific bottleneck], solved by [your real approach].`,
-          whyNow: 'There is a technical question in the conversation — answering the architecture framework first is always the right move.',
-          listenFor: 'Whether they want depth on a specific stage, latency tradeoffs, or your hands-on experience.',
+          title: `Explain ${compactTopic(topic)} architecture`,
+          detail: `Walk through in order: (1) core components of ${topic}, (2) the main production challenge, (3) one concrete proof point. Architecture first, trade-offs second, proof third.`,
+          say: `Here's how ${topic} works: [core components] — the production challenge most teams hit is [main bottleneck], and the fix is [your real approach].`,
+          whyNow: 'There is a technical question in the conversation — the architecture framework is the right opening move.',
+          listenFor: 'Whether they want depth on a specific component, the trade-offs, or your hands-on experience.',
         },
         {
           id: generateId(),
           type: 'talking_point',
-          title: isHallucination ? 'RAG + confidence threshold prevents hallucination' : isVoiceAI ? 'ASR accuracy is the production bottleneck' : 'Name the main production challenge',
-          detail: isHallucination
-            ? `RAG grounds the model on verified sources; a confidence threshold routes low-confidence outputs to a human or safe fallback instead of generating a wrong answer.`
-            : isVoiceAI
-              ? `ASR word error rate on specialized vocabulary is the main production bottleneck. Fix: fine-tune on domain data or add a hot-words/custom vocab layer.`
-              : `Naming the dominant production bottleneck precisely separates credible answers from textbook ones.`,
-          say: isHallucination
-            ? `The two main levers against hallucination are RAG — so the model only answers from verified sources — and a confidence threshold that routes uncertain outputs to a safe fallback instead of guessing.`
-            : isVoiceAI
-              ? `In production, the real challenge is ASR accuracy on specialized vocabulary. The fix is fine-tuning or a hot-words layer — generic ASR misses a lot of domain terms.`
-              : `The main production bottleneck is [specific challenge] — here's how we solved it: [your real example].`,
-          whyNow: 'Production specifics show real experience versus surface-level knowledge.',
+          title: `Name ${compactTopic(topic)}'s production bottleneck`,
+          detail: `Every system has one dominant production challenge. For ${topic} it could be latency, consistency, throughput, accuracy, or operational complexity — naming it precisely separates a credible answer from a textbook one.`,
+          say: `The main production challenge with ${topic} is [specific bottleneck] — here's how we addressed it: [your real example and outcome].`,
+          whyNow: 'Production specifics show real hands-on experience.',
           listenFor: 'Whether they challenge the bottleneck you named — that reveals their actual system depth.',
         },
         {
           id: generateId(),
           type: 'question',
-          title: 'Clarify scale and latency requirements',
-          detail: `Concurrent users and acceptable end-to-end latency change the architecture significantly — streaming, batch GPU inference, and edge deployment look very different at 100 vs. 1M users.`,
-          say: `What scale are you targeting — and is there a latency SLA, like sub-500ms end-to-end? Those two numbers change the whole design.`,
-          whyNow: 'Scale and latency requirements determine the entire system design — clarifying them focuses the technical discussion.',
-          listenFor: 'Concrete numbers (user count, latency budget) that let you tailor the technical depth to what actually matters.',
+          title: `Clarify ${compactTopic(topic)} scale and constraints`,
+          detail: `Architecture decisions for ${topic} change significantly at different scales — what works at 100 users can break at 1M, and latency vs. consistency trade-offs depend entirely on the use case.`,
+          say: `What scale and constraints are you targeting with ${topic} — latency budget, consistency requirements, throughput? Those shape the whole design.`,
+          whyNow: 'Scale and constraints determine the architecture — knowing them prevents wasted explanation.',
+          listenFor: 'Concrete numbers and requirements that let you tailor the technical depth.',
         }
       )
       return sanitizeSuggestions(fallbacks)

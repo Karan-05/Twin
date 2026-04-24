@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 /**
- * Smoke test: verifies fallback suggestions are specific and technical when the
- * transcript contains an STT-style indirect technical question.
+ * Smoke test: verifies fallback suggestions are specific to the actual
+ * technical topic and never hardcode "Voice AI" or "ASR→LLM→TTS".
  *
  * Run:  npx tsx scripts/fallback-smoke.ts
- * Pass: exits 0 with all assertions green
- * Fail: exits 1 with first failing assertion
  */
 
 import { buildFallbackSuggestions } from '../lib/suggestions'
@@ -25,84 +23,99 @@ function assert(condition: boolean, label: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 1: STT-style indirect voice AI question (the exact user transcript)
+// Scenario 1: Kafka — STT-style indirect technical question
 // ---------------------------------------------------------------------------
-console.log('\n[Scenario 1] Indirect voice AI question via STT')
+console.log('\n[Scenario 1] Kafka architecture question')
 
-const voiceAiChunks: TranscriptChunk[] = [
-  { id: '1', timestamp: '00:01:05', text: 'So hey can you tell me about how voice AI assistants work' },
-  { id: '2', timestamp: '00:01:15', text: 'like the technical side of it what model runs underneath' },
-  { id: '3', timestamp: '00:01:25', text: 'and also how do you stop them from hallucinating' },
+const kafkaChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:01:05', text: 'So hey can you walk me through how Kafka works' },
+  { id: '2', timestamp: '00:01:15', text: 'like the internal architecture and how it handles throughput at scale' },
 ]
 
-const voiceAiSuggestions = buildFallbackSuggestions(voiceAiChunks)
+const kafkaSuggestions = buildFallbackSuggestions(kafkaChunks)
 
-assert(voiceAiSuggestions.length === 3, 'returns 3 suggestions')
-
-const titles = voiceAiSuggestions.map((s) => s.title)
-const says = voiceAiSuggestions.map((s) => s.say)
-const types = voiceAiSuggestions.map((s) => s.type)
-
+assert(kafkaSuggestions.length === 3, 'returns 3 suggestions')
 assert(
-  titles.some((t) => /asr|pipeline|voice/i.test(t)),
-  `at least one title references pipeline/ASR (got: ${titles.join(' | ')})`
+  kafkaSuggestions.some((s) => /kafka/i.test(s.title)),
+  `at least one title references "Kafka" (got: ${kafkaSuggestions.map(s => s.title).join(' | ')})`
 )
 assert(
-  says.some((s) => /asr|pipeline|tts|llm/i.test(s)),
-  `at least one 'say' contains concrete pipeline terms`
+  kafkaSuggestions.some((s) => /kafka/i.test(s.say)),
+  `at least one 'say' references "Kafka"`
 )
 assert(
-  !says.some((s) => s.includes('[your key point]')),
-  `no 'say' field contains the bare placeholder "[your key point]"`
+  !kafkaSuggestions.some((s) => /voice ai|asr|tts|llm pipeline/i.test(s.say)),
+  `no 'say' hardcodes "Voice AI", "ASR", or "TTS"`
 )
 assert(
-  !titles.some((t) => /Re-anchor|Ask for the use case|Define the decision rule/i.test(t)),
-  `no generic fallback titles (Re-anchor / Ask for the use case / Define the decision rule)`
-)
-assert(
-  types.includes('answer'),
+  kafkaSuggestions.some((s) => s.type === 'answer'),
   `includes an 'answer' type suggestion`
 )
 
 // ---------------------------------------------------------------------------
-// Scenario 2: Hallucination focus
+// Scenario 2: Redis — STT-style indirect technical question
 // ---------------------------------------------------------------------------
-console.log('\n[Scenario 2] Hallucination prevention question')
+console.log('\n[Scenario 2] Redis architecture question')
 
-const hallucinationChunks: TranscriptChunk[] = [
-  { id: '1', timestamp: '00:02:00', text: 'Well how do you actually prevent hallucination in these LLM systems' },
-  { id: '2', timestamp: '00:02:10', text: 'because we had a bad incident last quarter where the model made things up' },
+const redisChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:02:00', text: 'Well actually how does Redis handle persistence and data durability' },
+  { id: '2', timestamp: '00:02:10', text: 'and what happens if the node crashes during a write' },
 ]
 
-const hallSuggestions = buildFallbackSuggestions(hallucinationChunks)
+const redisSuggestions = buildFallbackSuggestions(redisChunks)
 
-assert(hallSuggestions.length === 3, 'returns 3 suggestions')
+assert(redisSuggestions.length === 3, 'returns 3 suggestions')
 assert(
-  hallSuggestions.some((s) => /rag|retrieval|confidence|threshold/i.test(s.say)),
-  `at least one 'say' mentions RAG or confidence threshold`
+  redisSuggestions.some((s) => /redis/i.test(s.title)),
+  `at least one title references "Redis" (got: ${redisSuggestions.map(s => s.title).join(' | ')})`
 )
 assert(
-  !hallSuggestions.some((s) => s.say.includes('[your key point]')),
-  `no 'say' contains bare placeholder`
+  redisSuggestions.some((s) => /redis/i.test(s.say)),
+  `at least one 'say' references "Redis"`
+)
+assert(
+  !redisSuggestions.some((s) => /voice ai|asr.*tts/i.test(s.say)),
+  `no 'say' hardcodes Voice AI pipeline`
 )
 
 // ---------------------------------------------------------------------------
-// Scenario 3: Generic transcript — should NOT trigger technical branch
+// Scenario 3: Voice AI — still works, references the topic dynamically
 // ---------------------------------------------------------------------------
-console.log('\n[Scenario 3] Non-technical transcript — generic fallback expected')
+console.log('\n[Scenario 3] Voice AI question — handled dynamically, not hardcoded')
+
+const voiceChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:03:00', text: 'So hey can you tell me about how voice AI assistants work' },
+  { id: '2', timestamp: '00:03:10', text: 'like what model runs underneath and how do you stop hallucination' },
+]
+
+const voiceSuggestions = buildFallbackSuggestions(voiceChunks)
+
+assert(voiceSuggestions.length === 3, 'returns 3 suggestions')
+assert(
+  !voiceSuggestions.some((s) => /^Re-anchor|^Ask for the use case|^Define the decision rule/i.test(s.title)),
+  `no generic fallback titles`
+)
+assert(
+  !voiceSuggestions.some((s) => s.say === `Here's the direct answer on latest topic: [your key point] — and here's why that matters for your use case.`),
+  `does not produce the bare [your key point] placeholder say`
+)
+
+// ---------------------------------------------------------------------------
+// Scenario 4: Generic transcript — no technical branch triggered
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 4] Generic budget discussion — not forced into technical branch')
 
 const genericChunks: TranscriptChunk[] = [
-  { id: '1', timestamp: '00:03:00', text: 'I think we should move forward with the proposal' },
-  { id: '2', timestamp: '00:03:10', text: 'and look at what the budget looks like next quarter' },
+  { id: '1', timestamp: '00:04:00', text: 'I think we should move forward with the proposal' },
+  { id: '2', timestamp: '00:04:10', text: 'and look at what the budget looks like next quarter' },
 ]
 
 const genericSuggestions = buildFallbackSuggestions(genericChunks)
 
 assert(genericSuggestions.length >= 1, 'returns at least 1 suggestion')
-// These should be the standard fallback, NOT voice AI specific
 assert(
-  !genericSuggestions.some((s) => /asr|pipeline|tts|llm/i.test(s.say)),
-  `does NOT force voice AI content into generic transcript`
+  !genericSuggestions.some((s) => /asr|tts|llm pipeline|kafka|redis/i.test(s.say)),
+  `does NOT inject unrelated technical content`
 )
 
 // ---------------------------------------------------------------------------
@@ -111,6 +124,4 @@ assert(
 console.log(`\n${'─'.repeat(50)}`)
 console.log(`Results: ${passed} passed, ${failed} failed`)
 
-if (failed > 0) {
-  process.exit(1)
-}
+if (failed > 0) process.exit(1)
