@@ -19,6 +19,10 @@ const QUESTION_PREFIXES = [
   'does', 'did', 'is', 'are', 'was', 'were', 'will', 'have', 'has', 'had'
 ]
 
+// Matches STT-style indirect questions: "So hey can you tell me..." / "Well actually how does..."
+// Allows 1-3 filler words before a question word (STT rarely produces punctuation)
+const INDIRECT_QUESTION_RE = /^(?:(?:so|hey|well|um|uh|and|but|also|okay|right|yeah|now|like|alright|actually|basically)\s+){1,3}(?:can|could|would|should|how|what|why|when|where|who|which|will|do|does|did|is|are|was|were|have|has|had)\b/i
+
 const COMMITMENT_PATTERN = /\b(will|i'll|we'll|going to|next step|follow up|send|share|deliver|commit|owner|deadline|by\s+(monday|tuesday|wednesday|thursday|friday|tomorrow|next week|end of day|eod|q[1-4]))\b/i
 const RISK_PATTERN = /\b(not sure|unsure|maybe|depends|blocked|blocker|risk|concern|issue|problem|later|eventually|someday|hard|difficult|can't|cannot|won't|similar|nice to have|budget|timeline|approval)\b/i
 const NUMBER_PATTERN = /(?:\$|€|£|¥)?\b\d+(?:[.,]\d+)?\s*(?:%|percent|k|m|b|million|billion|days?|weeks?|months?|years?)?\b/i
@@ -73,7 +77,8 @@ function extractQuestions(chunks: TranscriptChunk[]): SignalLine[] {
       const lower = sentence.toLowerCase()
       if (
         sentence.includes('?') ||
-        QUESTION_PREFIXES.some((prefix) => lower.startsWith(`${prefix} `))
+        QUESTION_PREFIXES.some((prefix) => lower.startsWith(`${prefix} `)) ||
+        INDIRECT_QUESTION_RE.test(lower)
       ) {
         lines.push({ timestamp: chunk.timestamp, text: trimSignal(sentence) })
       }
