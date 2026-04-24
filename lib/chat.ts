@@ -13,6 +13,19 @@ const DETAIL_CONTEXT_CHAR_BUDGET = 3600
 const CHAT_MAX_TOKENS = 700
 const DETAIL_MAX_TOKENS = 580
 
+type QuestionCategory = 'definition' | 'mechanism' | 'comparison' | 'reason' | 'tradeoff' | 'implementation' | 'general'
+
+function inferQuestionCategory(text: string): QuestionCategory {
+  const lower = text.toLowerCase()
+  if (/\bwhat is\b|\bwhat's\b|\bdefine\b|\bmeaning of\b/.test(lower)) return 'definition'
+  if (/\bhow does\b|\bhow do\b|\bhow can\b|\bhow to\b|\bworks?\b/.test(lower)) return 'mechanism'
+  if (/\bcompare\b|\bversus\b|\bvs\b|\bdifference\b|\bbetter than\b/.test(lower)) return 'comparison'
+  if (/\bwhy\b|\bimportance\b|\bmatter\b/.test(lower)) return 'reason'
+  if (/\btradeoff\b|\btrade-off\b|\bpros and cons\b|\bdownside\b|\bupside\b/.test(lower)) return 'tradeoff'
+  if (/\bimplement\b|\bintegration\b|\brollout\b|\bonboarding\b|\bfirst two weeks\b/.test(lower)) return 'implementation'
+  return 'general'
+}
+
 function buildLocalChatFallback(
   transcript: TranscriptChunk[],
   meetingContext: MeetingContext,
@@ -22,6 +35,7 @@ function buildLocalChatFallback(
   const latest = transcript[transcript.length - 1]
   const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${userMessage}`) || signals.topics.slice(0, 2).join(' / ') || meetingContext.goal || 'current topic'
   const question = signals.questions[0]
+  const category = inferQuestionCategory(question?.text ?? userMessage)
   const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${userMessage} ${question?.text ?? ''}`)
 
   if (llmLike) {
@@ -37,6 +51,25 @@ function buildLocalChatFallback(
     ].join('\n')
   }
 
+  const genericCategoryLine = (() => {
+    switch (category) {
+      case 'definition':
+        return '- Answer it in order: what it is, how to think about it practically, and why it matters in this conversation.'
+      case 'mechanism':
+        return '- Answer it as a sequence: input, processing, output, and the main trade-off or bottleneck.'
+      case 'comparison':
+        return '- Compare it on one axis first — quality, cost, speed, risk, or fit — before adding nuance.'
+      case 'reason':
+        return '- Focus on why it matters, what changes because of it, and which decision it should influence.'
+      case 'tradeoff':
+        return '- Name the main trade-off explicitly, then say which side matters more here.'
+      case 'implementation':
+        return '- Walk through what happens first, where friction shows up, and what must be true for it to go smoothly.'
+      default:
+        return '- Give the direct answer first, then one implication that matters for this meeting.'
+    }
+  })()
+
   const lines = [
     '**In short:** Use the latest thread to move the conversation on **' + topic + '** right now.',
   ]
@@ -49,6 +82,7 @@ function buildLocalChatFallback(
     lines.push(`- Open question still hanging: "${question.text}" [${question.timestamp}]`) 
   }
 
+  lines.push(genericCategoryLine)
   lines.push(`- Your question: "${userMessage}"`)
   lines.push('- Groq is temporarily rate-limited, so this is a local fallback. Ask one clarifying question or lock one next step while the quota window resets.')
   return lines.join('\n')
@@ -68,6 +102,7 @@ function buildLocalDetailedFallback(
   const commitment = signals.commitments[0]
   const goalClause = meetingContext.goal ? `**${meetingContext.goal}**` : 'your stated goal'
   const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${suggestionTitle}`) || 'current topic'
+  const category = inferQuestionCategory(openQuestion?.text ?? suggestionTitle)
   const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`)
 
   const anchor =
@@ -104,8 +139,20 @@ function buildLocalDetailedFallback(
         openQuestion
           ? `- Open question: "${openQuestion.text}" [${openQuestion.timestamp}]`
           : `- Anchor on **${suggestionTitle}** — your most concrete fact or credential on this topic.`,
-        '- Structure: **[one clear claim]** → **[one supporting fact or example]** → **[concrete implication]**',
-        `> "Say: The key thing here is [your specific point] — and that means [concrete implication]."`,
+        category === 'definition'
+          ? '- Structure: answer what it is, then the practical way to think about it, then why it matters here.'
+          : category === 'mechanism'
+            ? '- Structure: answer as a path — input, processing, output, then the main trade-off or bottleneck.'
+            : category === 'comparison'
+              ? '- Structure: pick one comparison axis first, answer on that axis, then add nuance only if needed.'
+              : '- Structure: direct answer first, one concrete implication second, one next move third.',
+        category === 'definition'
+          ? `> "Say: Let me answer ${topic} directly: first what it is, then how to think about it practically, then why it matters here."`
+          : category === 'mechanism'
+            ? `> "Say: The clearest way to explain ${topic} is the path from input to output, plus the main trade-off that shapes the design."`
+            : category === 'comparison'
+              ? `> "Say: The cleanest way to compare ${topic} is on one axis first — quality, cost, speed, risk, or fit — then we can add nuance."`
+              : `> "Say: Let me answer that directly, then make it concrete with the one implication that matters most here."`,
         `- [ ] Next step to lock: connect this answer to ${goalClause} with a named owner and timing.`,
       ]
       break

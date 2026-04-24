@@ -73,6 +73,76 @@ function compactTopic(topic?: string): string {
   return topic.length > 28 ? `${topic.slice(0, 25).trimEnd()}…` : topic
 }
 
+type QuestionCategory = 'definition' | 'mechanism' | 'comparison' | 'reason' | 'tradeoff' | 'implementation' | 'general'
+
+function inferQuestionCategory(text: string): QuestionCategory {
+  const lower = text.toLowerCase()
+  if (/\bwhat is\b|\bwhat's\b|\bdefine\b|\bmeaning of\b/.test(lower)) return 'definition'
+  if (/\bhow does\b|\bhow do\b|\bhow can\b|\bhow to\b|\bworks?\b/.test(lower)) return 'mechanism'
+  if (/\bcompare\b|\bversus\b|\bvs\b|\bdifference\b|\bbetter than\b/.test(lower)) return 'comparison'
+  if (/\bwhy\b|\bwhy does\b|\bwhy do\b|\bimportance\b|\bmatter\b/.test(lower)) return 'reason'
+  if (/\btradeoff\b|\btrade-off\b|\bpros and cons\b|\bdownside\b|\bupside\b/.test(lower)) return 'tradeoff'
+  if (/\bimplement\b|\bintegration\b|\brollout\b|\bonboarding\b|\bfirst two weeks\b/.test(lower)) return 'implementation'
+  return 'general'
+}
+
+function buildSpeakableAnswerLine(topic: string, category: QuestionCategory): string {
+  switch (category) {
+    case 'definition':
+      return `Let me answer ${topic} directly: first what it is, then the practical way to think about it, then why it matters here.`
+    case 'mechanism':
+      return `The clearest way to explain ${topic} is the runtime path: input, core processing, output, and the main trade-off.`
+    case 'comparison':
+      return `The cleanest way to compare ${topic} is on one axis first — quality, cost, speed, or fit — instead of mixing everything together.`
+    case 'reason':
+      return `The useful answer on ${topic} is not a definition — it is why it matters, what changes because of it, and what decision it should drive.`
+    case 'tradeoff':
+      return `The right way to answer ${topic} is to name the main trade-off clearly, then say which side matters more in this context.`
+    case 'implementation':
+      return `I would answer ${topic} in sequence: what happens first, where the real bottleneck is, and what has to be true for it to work smoothly.`
+    default:
+      return `Let me answer ${topic} directly, then make it concrete with the one implication that matters most here.`
+  }
+}
+
+function buildQuestionTitle(topic: string, category: QuestionCategory): string {
+  switch (category) {
+    case 'definition':
+      return `Define ${compactTopic(topic)} clearly`
+    case 'mechanism':
+      return `Explain how ${compactTopic(topic)} works`
+    case 'comparison':
+      return `Compare ${compactTopic(topic)} on one axis`
+    case 'reason':
+      return `Explain why ${compactTopic(topic)} matters`
+    case 'tradeoff':
+      return `Name ${compactTopic(topic)}'s main tradeoff`
+    case 'implementation':
+      return `Walk through ${compactTopic(topic)} rollout`
+    default:
+      return `Answer on ${compactTopic(topic)}`
+  }
+}
+
+function buildSharpeningQuestion(topic: string, category: QuestionCategory): string {
+  switch (category) {
+    case 'definition':
+      return `Do you want the plain-English definition of ${topic}, or how it works in practice?`
+    case 'mechanism':
+      return `Do you want the conceptual picture of ${topic}, or the detailed step-by-step path?`
+    case 'comparison':
+      return `Which matters most for ${topic} here — quality, cost, speed, or fit?`
+    case 'reason':
+      return `What decision are we trying to make with ${topic} — understanding it, evaluating it, or choosing around it?`
+    case 'tradeoff':
+      return `Which side of the ${topic} trade-off matters more here — flexibility, speed, cost, or reliability?`
+    case 'implementation':
+      return `What constraint matters most for ${topic} right now — time, complexity, ownership, or risk?`
+    default:
+      return `What is the one thing you most want to understand about ${topic}?`
+  }
+}
+
 // Meeting-type-specific personas with a single inline few-shot example showing the quality bar
 const MEETING_PERSONAS: Record<string, string> = {
   'Sales Call': `You are a veteran enterprise sales strategist who has closed $200M+ in deals. You instantly read buying signals, hidden objections, and champion/blocker dynamics. You know the exact right question at the exact right moment is worth more than any pitch deck.
@@ -498,6 +568,7 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
   if (signals.questions[0]) {
     const question = signals.questions[0]
     const hasShortlist = comparisonSet.length >= 2
+    const category = inferQuestionCategory(question.text)
 
     const TECHNICAL_RE = /how (does|do|can|to)|architect|pipeline|scale|real.?time|latency|hallucin|production|inference|accuracy|model|deploy|securi|api\b|integrat|implement/i
     const rawText = [question.text, ...recentChunks.map((c) => c.text)].join(' ')
@@ -576,13 +647,13 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
     fallbacks.push({
       id: generateId(),
       type: 'answer',
-      title: `Answer on ${compactTopic(primaryTopic)}`,
+      title: buildQuestionTitle(primaryTopic, category),
       detail: hasShortlist
         ? `They explicitly asked: "${question.text}" [${question.timestamp}]. Answer by anchoring on ${primaryTopic} and comparing it directly against ${comparisonText} — pick one axis (quality, cost, workflow fit) and stick with it.`
-        : `They explicitly asked: "${question.text}" [${question.timestamp}]. Answer directly on ${primaryTopic}: lead with your sharpest point, support it with one concrete fact, then invite a follow-up.`,
+        : `They explicitly asked: "${question.text}" [${question.timestamp}]. Answer directly on ${primaryTopic}: give the answer first, structure it clearly, and tie it back to what this conversation is actually trying to decide.`,
       say: hasShortlist
         ? `Let me anchor on ${primaryTopic}: compared with ${comparisonSet.slice(1, 3).join(' and ')}, the key difference is — [your specific point].`
-        : `Here's the direct answer on ${primaryTopic}: [your key point] — and here's why that matters for your use case.`,
+        : buildSpeakableAnswerLine(primaryTopic, category),
       whyNow: 'A direct question just landed — a focused, specific answer beats a broad overview every time.',
       listenFor: 'A concrete follow-up criterion (quality, cost, fit) that tells you which angle they actually care about.',
     })
@@ -613,7 +684,7 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
         type: 'question',
         title: `Anchor the evaluation criteria`,
         detail: `The question about ${primaryTopic} needs a lens. Ask what they're optimizing for — one answer turns an overview into a targeted recommendation.`,
-        say: `What are you optimizing for with ${primaryTopic} — quality, cost, workflow fit, or a specific use case?`,
+        say: buildSharpeningQuestion(primaryTopic, category),
         whyNow: 'A concrete criterion shapes the answer and prevents a wandering overview.',
         listenFor: 'A specific use case or constraint that lets you give a direct recommendation.',
       })
@@ -622,8 +693,8 @@ export function buildFallbackSuggestions(recentChunks: TranscriptChunk[]): Sugge
         id: generateId(),
         type: 'talking_point',
         title: `Name the key tradeoff on ${compactTopic(primaryTopic)}`,
-        detail: `Move beyond description to the real tradeoff. The most useful thing you can say about ${primaryTopic} is what you'd have to give up to use it — that's what drives decisions.`,
-        say: `The key tradeoff with ${primaryTopic} is [quality vs. cost / flexibility vs. reliability / ease vs. control] — which side matters more for you?`,
+        detail: `Move beyond description to the real tradeoff. The most useful thing you can say about ${primaryTopic} is what becomes easier, harder, faster, slower, cheaper, or riskier — that is what actually drives decisions.`,
+        say: `The key tradeoff on ${primaryTopic} is not whether it is good or bad — it is which cost, risk, or constraint matters most in this situation.`,
         whyNow: 'Naming the tradeoff forces specificity and usually gets a faster, more useful reply than a general pitch.',
         listenFor: 'Which side of the tradeoff they land on — that shapes the rest of the recommendation.',
       })

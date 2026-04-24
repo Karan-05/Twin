@@ -145,6 +145,28 @@ assert(
 )
 
 // ---------------------------------------------------------------------------
+// Scenario 6: Generic concept question — no placeholder answer scaffolds
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 6] Generic concept question — no placeholder scaffolds')
+
+const conceptChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:06:00', text: 'What is product market fit and why does it matter so much' },
+  { id: '2', timestamp: '00:06:12', text: 'I keep hearing it everywhere but I want a clean way to explain it in a meeting' },
+]
+
+const conceptSuggestions = buildFallbackSuggestions(conceptChunks)
+
+assert(conceptSuggestions.length === 3, 'returns 3 suggestions')
+assert(
+  !conceptSuggestions.some((s) => /\[(your|specific|key|metric|example|point|outcome)/i.test(`${s.title} ${s.detail} ${s.say}`)),
+  `does not use placeholder-style scaffolds in generic topic fallbacks`
+)
+assert(
+  conceptSuggestions.some((s) => /what it is|why it matters|one axis|trade-off|directly/i.test(s.say)),
+  `includes a concrete, speakable answer structure for a generic topic`
+)
+
+// ---------------------------------------------------------------------------
 // Results
 // ---------------------------------------------------------------------------
 console.log(`\n${'─'.repeat(50)}`)
