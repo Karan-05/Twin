@@ -614,37 +614,57 @@ export async function generateSuggestionBatch(
   suggestions = rankSuggestions(suggestions, promptChunks, meetingContext, options.meetingState)
 
   const fallbackSuggestions = buildFallbackSuggestions(promptChunks)
+  const previousTitleKeys = new Set(previousSuggestions.map((s) => s.title.trim().toLowerCase()))
   for (const fallback of fallbackSuggestions) {
     if (suggestions.length >= 3) break
     if (isSemanticDuplicate(fallback, suggestions)) continue
-    if (isSemanticDuplicate(fallback, previousSuggestions)) continue
+    // Only block exact-title repeats from previous batches — topic-aware fallbacks are
+    // always better than the generic while-loop ones, even if topically similar.
+    if (previousTitleKeys.has(fallback.title.trim().toLowerCase())) continue
     suggestions.push(fallback)
   }
 
+  // Build context for topic-aware last-resort pads
+  const padSignals = extractConversationSignals(promptChunks)
+  const padTopicLabels = extractTopicLabels(promptChunks)
+  const padTopic = padTopicLabels[0] || padSignals.topics[0] || null
+  const padTopicStr = padTopic ? compactTopic(padTopic) : 'this topic'
+  const padQuestion = padSignals.questions[0]?.text || null
+
   while (suggestions.length < 3) {
-    const fallback: Suggestion = {
-      id: generateId(),
-      type: 'question',
-      title: 'Confirm the next step',
-      detail: 'Pause the discussion long enough to lock an owner, a deliverable, and a timeline. If nobody can name all three clearly, the meeting is still too vague.',
-      say: 'What is the next step, who owns it, and by when?',
-      whyNow: 'The room is close to ending without enough execution clarity.',
-      listenFor: 'Owner, deliverable, and date — all three, not just one.',
-    }
-    if (!isSemanticDuplicate(fallback, suggestions) && !isSemanticDuplicate(fallback, previousSuggestions)) {
+    const fallback: Suggestion = padQuestion
+      ? {
+          id: generateId(),
+          type: 'answer',
+          title: `Address the open question on ${padTopicStr}`,
+          detail: `A direct question is open in the conversation: "${padQuestion.slice(0, 90)}${padQuestion.length > 90 ? '…' : ''}" — give a focused answer rather than a broad overview.`,
+          say: `Let me answer that directly: ${padTopic ? `regarding ${padTopic}, ` : ''}what specifically would be most useful to know?`,
+          whyNow: 'There is an open question that needs a direct, focused answer to move the conversation forward.',
+          listenFor: 'Whether the answer closes the question or surfaces a more specific follow-up.',
+        }
+      : {
+          id: generateId(),
+          type: 'question',
+          title: `Confirm the next step on ${padTopicStr}`,
+          detail: `Pause to lock the most useful next move on ${padTopic || 'the current topic'} — whether that is a recommendation, deeper comparison, or a concrete decision.`,
+          say: `What would make this most useful — a specific recommendation, a comparison, or a decision on ${padTopicStr}?`,
+          whyNow: 'Without a clear next move the conversation stays broad and hard to act on.',
+          listenFor: 'A named recommendation, comparison axis, or decision — not just more general interest.',
+        }
+    if (!isSemanticDuplicate(fallback, suggestions) && !previousTitleKeys.has(fallback.title.trim().toLowerCase())) {
       suggestions.push(fallback)
       continue
     }
     const secondaryFallback: Suggestion = {
       id: generateId(),
       type: 'clarification',
-      title: 'Pin down the blocker',
-      detail: 'Name the exact ambiguity or blocker keeping this conversation fuzzy. If no one can state it clearly, ask who owns resolving it and by when.',
-      say: 'What exactly is still unclear, and who is resolving it?',
-      whyNow: 'A final clarifying move is better than ending on mushy agreement.',
-      listenFor: 'A clear blocker statement and an owner with a date.',
+      title: `Pin down what matters most on ${padTopicStr}`,
+      detail: `The conversation about ${padTopic || 'the current topic'} still needs a sharper focus. Name the single most important question, concern, or decision criterion that would make this conversation resolved.`,
+      say: `What is the one thing about ${padTopicStr} that, once answered, would make everything else clear?`,
+      whyNow: 'A focused clarifying question is better than a broad overview.',
+      listenFor: 'A specific gap, concern, or criterion that unlocks a concrete answer or next step.',
     }
-    if (!isSemanticDuplicate(secondaryFallback, suggestions) && !isSemanticDuplicate(secondaryFallback, previousSuggestions)) {
+    if (!isSemanticDuplicate(secondaryFallback, suggestions) && !previousTitleKeys.has(secondaryFallback.title.trim().toLowerCase())) {
       suggestions.push(secondaryFallback)
       continue
     }
@@ -652,13 +672,13 @@ export async function generateSuggestionBatch(
     const tertiaryFallback: Suggestion = {
       id: generateId(),
       type: 'talking_point',
-      title: 'Re-anchor the thread',
-      detail: 'Summarize the latest topic in one crisp line and move the room toward one decision, comparison, or next step instead of another broad pass.',
-      say: 'Let me re-anchor this to the one decision we actually need from this thread.',
-      whyNow: 'A concrete re-anchor is better than another generic loop.',
-      listenFor: 'Whether the room names a specific decision or keeps drifting.',
+      title: `Re-anchor on ${padTopicStr}`,
+      detail: `Summarize the key point about ${padTopic || 'the current topic'} in one sharp line and move toward a recommendation, comparison, or decision instead of another broad pass.`,
+      say: `Let me re-anchor on ${padTopicStr} — the single most useful thing I can add right now is a direct recommendation.`,
+      whyNow: 'A concrete re-anchor on the actual topic beats another generic pass.',
+      listenFor: 'Whether they name a specific need or keep the topic general.',
     }
-    if (!isSemanticDuplicate(tertiaryFallback, suggestions) && !isSemanticDuplicate(tertiaryFallback, previousSuggestions)) {
+    if (!isSemanticDuplicate(tertiaryFallback, suggestions) && !previousTitleKeys.has(tertiaryFallback.title.trim().toLowerCase())) {
       suggestions.push(tertiaryFallback)
       continue
     }

@@ -726,8 +726,13 @@ export default function TranscriptPanel() {
         </div>
       </div>
 
-      {/* Context form — only shown when not recording */}
-      {!isRecording && showContextForm && <ContextForm />}
+      {/* Context form — only shown when not recording.
+          Bounded to 40vh when transcript exists so chunks stay visible. */}
+      {!isRecording && showContextForm && (
+        <div className={`flex-shrink-0${transcript.length > 0 ? ' max-h-[40vh] overflow-y-auto' : ''}`}>
+          <ContextForm />
+        </div>
+      )}
 
       {/* Active context pill while recording */}
       {isRecording && contextSet && (
