@@ -329,7 +329,7 @@ export default function ChatPanel() {
         setIsStreamingChat(false)
       }
     },
-    [isStreamingChat, messages, transcript, apiKey, settings, addMessage, updateLastMessage, setIsStreamingChat]
+    [isStreamingChat, messages, transcript, apiKey, settings, meetingContext, addMessage, updateLastMessage, setIsStreamingChat]
   )
 
   useEffect(() => {

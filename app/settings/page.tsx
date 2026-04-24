@@ -43,10 +43,14 @@ export default function SettingsPage() {
   }, [])
 
   const handleSave = () => {
-    if (!apiKey.trim()) return
-    localStorage.setItem('groq_api_key', apiKey.trim())
+    const trimmedKey = apiKey.trim()
+    if (trimmedKey) {
+      localStorage.setItem('groq_api_key', trimmedKey)
+    } else {
+      localStorage.removeItem('groq_api_key')
+    }
     saveSettings(settings)
-    setStoreApiKey(apiKey.trim())
+    setStoreApiKey(trimmedKey)
     setSettings(settings)
     setSaved(true)
     setTimeout(() => router.push('/'), 800)
@@ -168,7 +172,7 @@ export default function SettingsPage() {
           {/* Save */}
           <button
             onClick={handleSave}
-            disabled={!apiKey.trim() || saved}
+            disabled={saved}
             className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed text-text-on-accent font-semibold py-3 rounded-xl transition-colors"
           >
             {saved ? (

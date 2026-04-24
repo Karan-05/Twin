@@ -11,7 +11,7 @@ import { withGroqTextBudget } from './groqBudget'
 
 const VALID_TYPES = new Set(['question', 'talking_point', 'answer', 'fact_check', 'clarification'])
 const OWNER_OR_TIMELINE_PATTERN = /\b(owner|who can|who owns|make the call|deadline|by when|tomorrow|friday|next step|follow up|escalat|workaround|qa|legal|security review|q[1-4])\b/i
-const SUGGESTION_MAX_TOKENS = 650
+const SUGGESTION_MAX_TOKENS = 900
 
 // Common English words that appear sentence-initial (capitalized) in speech transcripts but
 // are not topic labels. Stopwords do the semantic work; length >= 4 handles the residual
@@ -436,8 +436,6 @@ function scoreSuggestion(
   }
 
   if (suggestion.say) score += 1.5
-  if (suggestion.whyNow) score += 1
-  if (suggestion.listenFor) score += 1
   if ((suggestion.say ?? suggestion.detail).length <= 180) score += 0.75
   if (meetingContext.goal && combinedText.includes(meetingContext.goal.toLowerCase().split(' ')[0] ?? '')) score += 0.5
 

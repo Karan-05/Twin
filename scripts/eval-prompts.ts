@@ -668,8 +668,6 @@ function scoreSuggestion(suggestion: Suggestion, chunks: TranscriptChunk[], meet
   if ((meetingContext.prepNotes ?? '').toLowerCase().includes('bilingual') && /(operations|ops|finance|q4|internal approval|stall)/i.test(combinedText)) score += 0.75
 
   if (suggestion.say) score += 1.5
-  if (suggestion.whyNow) score += 1
-  if (suggestion.listenFor) score += 1
   if ((suggestion.say ?? suggestion.detail).length <= 180) score += 0.75
 
   return score

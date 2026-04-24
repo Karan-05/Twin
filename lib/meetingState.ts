@@ -87,14 +87,15 @@ export function deriveMeetingState(
   const stakeholderSignals = collectStakeholders(chunks, meetingContext.prepNotes)
 
   let mode: MeetingState['mode'] = 'probe'
-  if (currentQuestion) mode = 'answer'
-  else if (blocker && deadlineSignal) mode = 'unblock'
+  if (blocker && deadlineSignal) mode = 'unblock'
   else if (riskyClaim) mode = 'decide'
+  else if (currentQuestion) mode = 'answer'
   else if (signals.commitments.length > 0) mode = 'close'
 
   let triggerReason: SuggestionTriggerReason | null = null
-  if (currentQuestion) triggerReason = 'question'
+  if (blocker && deadlineSignal) triggerReason = 'deadline'
   else if (riskyClaim) triggerReason = 'risky_claim'
+  else if (currentQuestion) triggerReason = 'question'
   else if (blocker) triggerReason = 'blocker'
   else if (deadlineSignal) triggerReason = 'deadline'
   else if (loopStatus) triggerReason = 'loop'
@@ -126,4 +127,3 @@ export function buildMeetingStateSection(meetingState: MeetingState): string {
     `Stakeholders: ${meetingState.stakeholderSignals.length > 0 ? meetingState.stakeholderSignals.join(' · ') : 'none'}`,
   ].join('\n')
 }
-
