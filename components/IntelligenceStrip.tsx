@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { Brain, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
+import { Brain, ChevronDown, ChevronUp, Loader2, Copy, Check } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import { extractIntelligenceSummary } from '@/lib/intelligence'
 
@@ -13,6 +13,25 @@ const SECTION_CONFIG = [
   { key: 'keyData' as const, label: 'Key Data', dot: 'bg-[#f97316]' },
   { key: 'openQuestions' as const, label: 'Open Questions', dot: 'bg-[#a855f7]' },
 ]
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-text-faint hover:text-accent ml-auto pl-1"
+      aria-label="Copy to clipboard"
+    >
+      {copied ? <Check size={10} className="text-accent" /> : <Copy size={10} />}
+    </button>
+  )
+}
 
 export default function IntelligenceStrip() {
   const {
@@ -125,9 +144,10 @@ export default function IntelligenceStrip() {
                 ) : (
                   <ul className="space-y-1">
                     {items.map((item, i) => (
-                      <li key={i} className="text-xs text-text-secondary leading-snug flex items-start gap-1.5">
+                      <li key={i} className="group text-xs text-text-secondary leading-snug flex items-start gap-1.5">
                         <span className="text-text-faint flex-shrink-0 mt-px">·</span>
-                        <span>{item}</span>
+                        <span className="flex-1">{item}</span>
+                        <CopyButton text={item} />
                       </li>
                     ))}
                   </ul>

@@ -36,7 +36,7 @@ ${text}
 ## Output rules — strict
 - decisions: Firm choices/commitments explicitly confirmed. Include who decided if named. NOT proposals or maybes.
 - actionItems: Concrete tasks. Format: "[Owner]: [task] by [deadline]" when names/dates are available. Owner = "TBD" if unclear.
-- keyData: Specific numbers, prices, names, dates, URLs, percentages worth preserving. ≤12 words each.
+- keyData: Phone numbers, emails, LinkedIn/Instagram/social handles, physical addresses, URLs, names with titles, key numbers/prices/dates. Include [timestamp] if present. ≤15 words each.
 - openQuestions: Unresolved questions or ambiguities that WILL matter downstream. NOT rhetorical questions.
 - Max 5 items per array. Each item ≤15 words. Only include items clearly supported by the transcript.
 - Empty arrays are correct when nothing of that type occurred.
