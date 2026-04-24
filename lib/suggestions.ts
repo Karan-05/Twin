@@ -310,6 +310,9 @@ function sanitizeSuggestions(
   const blockedQuestion = blockedQuestionText
     ? { title: blockedQuestionText, detail: blockedQuestionText }
     : null
+  // Exact-title-only for cross-batch dedup: semantic at 0.72 blocks all same-domain angles
+  // on narrow-topic meetings where the same keywords appear in every batch.
+  const prevTitleKeys = new Set(previousSuggestions.map((s) => s.title.trim().toLowerCase()))
 
   for (const suggestion of suggestions) {
     const title = suggestion.title.replace(/\s+/g, ' ').trim()
@@ -323,7 +326,7 @@ function sanitizeSuggestions(
     const candidate = { title, detail }
     if (suggestion.type === 'question' && blockedQuestion && semanticSimilarity(candidate, blockedQuestion) >= 0.68) continue
     if (isSemanticDuplicate(candidate, cleaned)) continue
-    if (isSemanticDuplicate(candidate, previousSuggestions)) continue
+    if (prevTitleKeys.has(key)) continue
     seenTitles.add(key)
 
     cleaned.push({
@@ -631,59 +634,30 @@ export async function generateSuggestionBatch(
   const padTopicStr = padTopic ? compactTopic(padTopic) : 'this topic'
   const padQuestion = padSignals.questions[0]?.text || null
 
-  while (suggestions.length < 3) {
-    const fallback: Suggestion = padQuestion
+  // Single last-resort pad — 2 real suggestions + 1 contextual pad beats 3 generic ones.
+  if (suggestions.length < 3) {
+    const pad: Suggestion = padQuestion
       ? {
           id: generateId(),
           type: 'answer',
-          title: `Address the open question on ${padTopicStr}`,
-          detail: `A direct question is open in the conversation: "${padQuestion.slice(0, 90)}${padQuestion.length > 90 ? '…' : ''}" — give a focused answer rather than a broad overview.`,
-          say: `Let me answer that directly: ${padTopic ? `regarding ${padTopic}, ` : ''}what specifically would be most useful to know?`,
-          whyNow: 'There is an open question that needs a direct, focused answer to move the conversation forward.',
-          listenFor: 'Whether the answer closes the question or surfaces a more specific follow-up.',
+          title: `Answer their ${padTopicStr} question directly`,
+          detail: `An open question is waiting: "${padQuestion.slice(0, 90)}${padQuestion.length > 90 ? '…' : ''}" — give a focused answer rather than a broad overview.`,
+          say: `Here's the direct answer on ${padTopicStr}: what matters most is…`,
+          whyNow: 'A direct question is open — a focused answer moves things forward faster than a general explanation.',
+          listenFor: 'Whether the answer resolves their question or surfaces a more specific need.',
         }
       : {
           id: generateId(),
           type: 'question',
-          title: `Confirm the next step on ${padTopicStr}`,
-          detail: `Pause to lock the most useful next move on ${padTopic || 'the current topic'} — whether that is a recommendation, deeper comparison, or a concrete decision.`,
-          say: `What would make this most useful — a specific recommendation, a comparison, or a decision on ${padTopicStr}?`,
-          whyNow: 'Without a clear next move the conversation stays broad and hard to act on.',
-          listenFor: 'A named recommendation, comparison axis, or decision — not just more general interest.',
+          title: `Get specific on ${padTopicStr}`,
+          detail: `Move from overview to specifics on ${padTopic || 'the current topic'} — one sharp question unlocks a concrete recommendation instead of continuing broadly.`,
+          say: `What's the most important thing to nail about ${padTopicStr} — quality, speed, cost, or fit for your use case?`,
+          whyNow: 'The conversation needs a sharper focus to produce something actionable.',
+          listenFor: 'A concrete priority or use case rather than continued general exploration.',
         }
-    if (!isSemanticDuplicate(fallback, suggestions) && !previousTitleKeys.has(fallback.title.trim().toLowerCase())) {
-      suggestions.push(fallback)
-      continue
+    if (!isSemanticDuplicate(pad, suggestions) && !previousTitleKeys.has(pad.title.trim().toLowerCase())) {
+      suggestions.push(pad)
     }
-    const secondaryFallback: Suggestion = {
-      id: generateId(),
-      type: 'clarification',
-      title: `Pin down what matters most on ${padTopicStr}`,
-      detail: `The conversation about ${padTopic || 'the current topic'} still needs a sharper focus. Name the single most important question, concern, or decision criterion that would make this conversation resolved.`,
-      say: `What is the one thing about ${padTopicStr} that, once answered, would make everything else clear?`,
-      whyNow: 'A focused clarifying question is better than a broad overview.',
-      listenFor: 'A specific gap, concern, or criterion that unlocks a concrete answer or next step.',
-    }
-    if (!isSemanticDuplicate(secondaryFallback, suggestions) && !previousTitleKeys.has(secondaryFallback.title.trim().toLowerCase())) {
-      suggestions.push(secondaryFallback)
-      continue
-    }
-
-    const tertiaryFallback: Suggestion = {
-      id: generateId(),
-      type: 'talking_point',
-      title: `Re-anchor on ${padTopicStr}`,
-      detail: `Summarize the key point about ${padTopic || 'the current topic'} in one sharp line and move toward a recommendation, comparison, or decision instead of another broad pass.`,
-      say: `Let me re-anchor on ${padTopicStr} — the single most useful thing I can add right now is a direct recommendation.`,
-      whyNow: 'A concrete re-anchor on the actual topic beats another generic pass.',
-      listenFor: 'Whether they name a specific need or keep the topic general.',
-    }
-    if (!isSemanticDuplicate(tertiaryFallback, suggestions) && !previousTitleKeys.has(tertiaryFallback.title.trim().toLowerCase())) {
-      suggestions.push(tertiaryFallback)
-      continue
-    }
-
-    break
   }
 
   return {

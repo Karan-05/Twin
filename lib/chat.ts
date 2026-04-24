@@ -11,7 +11,7 @@ const RESPONSE_GUARDRAILS = `You are a live meeting copilot. Never invent custom
 const CHAT_CONTEXT_CHAR_BUDGET = 4200
 const DETAIL_CONTEXT_CHAR_BUDGET = 3600
 const CHAT_MAX_TOKENS = 700
-const DETAIL_MAX_TOKENS = 420
+const DETAIL_MAX_TOKENS = 580
 
 function buildLocalChatFallback(
   transcript: TranscriptChunk[],

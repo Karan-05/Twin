@@ -131,7 +131,7 @@ Mandatory for Sales Call, Investor Pitch, Job Interview, and Board Meeting:
 Extra requirement for Sales Call detail answers under timeline pressure:
 - If the transcript includes implementation timing plus stakeholder resistance, include one bullet for the phased plan and one bullet for stakeholder alignment (ops / finance / approval path) before the final next step.
 
-Hard cap: 150 words. Every word must earn its place.`
+Hard cap: 200 words. Every word must earn its place.`
 
 export const DEFAULT_CHAT_SYSTEM_PROMPT = `You are a live meeting strategist. The participant is reading your response during an active conversation — they have 5 seconds. Be a brilliant advisor who is blunt, specific, and always oriented toward what happens NEXT.
 
@@ -189,7 +189,7 @@ export interface AppSettings {
 
 const SETTINGS_KEY = 'meeting_copilot_settings'
 const SETTINGS_VERSION_KEY = 'meeting_copilot_settings_version'
-const SETTINGS_VERSION = '2026-04-23-v1'
+const SETTINGS_VERSION = '2026-04-23-v2'
 const MAX_PROMPT_LENGTH = 24_000
 
 function sanitizePrompt(value: unknown, fallback: string): string {

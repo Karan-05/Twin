@@ -91,19 +91,12 @@ function SuggestionCard({
           </span>
           <p className="text-text-secondary text-sm font-medium leading-snug">{suggestion.title}</p>
           {suggestion.say ? (
-            <div className="mt-1.5 space-y-1.5">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-faint">Say</p>
-              <p className="text-text-secondary text-xs leading-relaxed">“{suggestion.say}”</p>
-              {suggestion.whyNow && (
-                <p className="text-[11px] text-text-muted leading-relaxed"><span className="font-semibold text-text-secondary">Why now:</span> {suggestion.whyNow}</p>
-              )}
-              {suggestion.listenFor && (
-                <p className="text-[11px] text-text-muted leading-relaxed"><span className="font-semibold text-text-secondary">Listen for:</span> {suggestion.listenFor}</p>
-              )}
-            </div>
+            <p className="text-text-secondary text-xs leading-relaxed mt-1.5 italic">
+              {suggestion.say.length > 90 ? suggestion.say.slice(0, 87) + '...' : suggestion.say}
+            </p>
           ) : (
             <p className="text-text-muted text-xs leading-relaxed mt-1.5">
-              {suggestion.detail}
+              {suggestion.detail.length > 110 ? suggestion.detail.slice(0, 107) + '...' : suggestion.detail}
             </p>
           )}
         </div>
