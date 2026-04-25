@@ -33,11 +33,11 @@ const PLAYBOOKS: Record<string, string[]> = {
     'If the interviewer asks a direct question, help the candidate answer first; do not burn the moment on a meta-question.',
   ],
   'Investor Pitch': [
-    'Bias toward credibility, wedge clarity, defensibility, and what the current traction really proves.',
-    'If a top-down claim appears, shift toward bottom-up evidence or a sharper segment definition.',
+    'Bias toward credibility, strategic clarity, evidence quality, and what the current traction or progress really proves.',
+    'If a broad market or strategy claim appears, shift toward sharper evidence, segmentation, or a clearer decision frame.',
     'Keep the founder out of hand-wavy mode; move them toward concrete learning and strategic tradeoffs.',
     'If the investor asks a direct question, at least one top suggestion should help answer it directly before suggesting a question back.',
-    'Do not ask the investor to define your wedge for you when they have already asked the founder directly.',
+    'Do not ask the room to define your own strategy for you when they have already asked the participant directly.',
   ],
   'Customer Discovery': [
     'Bias toward truth-seeking over pitching: quantify pain, current workaround, owner, and priority.',

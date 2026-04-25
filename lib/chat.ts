@@ -9,7 +9,6 @@ import {
   extractPrimaryTopic,
   inferQuestionCategory,
   inferQuestionIntent,
-  isTechnicalQuestion,
   selectActionableQuestion,
 } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
@@ -21,19 +20,6 @@ const CHAT_CONTEXT_CHAR_BUDGET = 4200
 const DETAIL_CONTEXT_CHAR_BUDGET = 3600
 const CHAT_MAX_TOKENS = 700
 const DETAIL_MAX_TOKENS = 580
-
-function isSellerishSalesContext(meetingContext: MeetingContext): boolean {
-  return meetingContext.meetingType === 'Sales Call' && /\b(seller|account executive|sales manager)\b/i.test(meetingContext.userRole || '')
-}
-
-function inferSalesWorkflowSummary(transcript: TranscriptChunk[]): string {
-  const text = transcript.map((chunk) => chunk.text).join(' ').toLowerCase()
-  if (/\bdeal sourc|outbound|calling\b/.test(text)) return 'outbound calling and deal sourcing'
-  if (/\bfollow[- ]?up\b/.test(text)) return 'follow-up conversations'
-  if (/\bqualif(y|ication)\b/.test(text)) return 'lead qualification'
-  if (/\bappointment|book meetings?\b/.test(text)) return 'meeting booking'
-  return 'customer conversations'
-}
 
 function buildKnowledgeSupportLine(topic: string, category: QuestionCategory): string {
   switch (category) {
@@ -71,20 +57,6 @@ function buildLocalChatFallback(
   const question = selectActionableQuestion(transcript.slice(-8), meetingContext)
   const category = inferQuestionCategory(question?.text ?? userMessage)
   const questionIntent = inferQuestionIntent(question?.text ?? userMessage, meetingContext)
-  const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${userMessage} ${question?.text ?? ''}`)
-
-  if (llmLike) {
-    return [
-      '**In short:** Explain the runtime path clearly: **tokenization -> embeddings -> transformer attention -> next-token decoding**.',
-      question ? `- Open question: "${question.text}" [${question.timestamp}]` : `- Topic: **${topic}**`,
-      '- Tokenization splits the input text into model-sized tokens.',
-      '- Embeddings turn those tokens into vectors, and positional information preserves order.',
-      '- Transformer self-attention layers update each token representation using the surrounding context.',
-      '- Decoding picks the next token repeatedly until the model reaches a stopping point.',
-      '> "Say: An LLM tokenizes the prompt, maps tokens to embeddings, runs attention over the sequence, and predicts the next token repeatedly until the answer is complete."',
-      '- Groq is temporarily rate-limited, so this is a local technical fallback.',
-    ].join('\n')
-  }
 
   if (questionIntent !== 'meeting_coaching') {
     return [
@@ -151,12 +123,7 @@ function buildLocalDetailedFallback(
   const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${suggestionTitle}`) || 'current topic'
   const category = inferQuestionCategory(openQuestion?.text ?? suggestionTitle)
   const questionIntent = inferQuestionIntent(openQuestion?.text ?? suggestionTitle, meetingContext)
-  const technicalKnowledge =
-    questionIntent === 'technical_knowledge' ||
-    isTechnicalQuestion(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`, meetingContext)
-  const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${suggestionTitle} ${openQuestion?.text ?? ''}`)
-  const productKnowledge = questionIntent === 'product_knowledge'
-  const workflowSummary = inferSalesWorkflowSummary(transcript)
+  const knowledgeQuestion = questionIntent !== 'meeting_coaching'
 
   const anchor =
     suggestionType === 'answer' || suggestionType === 'question' ? openQuestion ?? latest
@@ -168,58 +135,18 @@ function buildLocalDetailedFallback(
     ? `**Evidence:** "${anchor.text}" [${anchor.timestamp}]`
     : '**Evidence:** Thin transcript — using suggestion framing.'
 
-  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && llmLike) {
-    return [
-      evidenceLine,
-      '',
-      '**In short:** Explain the runtime path: **tokenization -> embeddings -> transformer attention -> next-token decoding**.',
-      '- Tokenization breaks the input text into tokens the model can process.',
-      '- Embeddings convert those tokens into vectors, and positional information preserves order in the sequence.',
-      '- Transformer attention layers update each token representation using the surrounding context, which is where the model gets contextual understanding.',
-      '- Decoding then chooses one token at a time until the answer is complete; training is the earlier process that taught those weights what token patterns are likely.',
-      '> "Say: An LLM tokenizes the prompt, maps tokens into embeddings, runs attention over the sequence to build context, and then predicts the next token repeatedly until the full answer is formed."',
-      '- [ ] Next step to lock: ask whether they want the training loop next, or a deeper dive on embeddings versus attention.',
-    ].join('\n')
-  }
-
-  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && productKnowledge) {
-    return [
-      evidenceLine,
-      '',
-      `**In short:** Answer **${topic}** as a product or category first — then tie it to a concrete workflow or buyer outcome.`,
-      `- They are asking what **${topic}** is in practical terms, not for meeting coaching. Start with the category, the workflow it fits into, and the trade-off or buyer outcome that matters.`,
-      `- Anchor on the workflow signal already in the transcript: **${workflowSummary}**${latest ? ` [${latest.timestamp}]` : ''}.`,
-      suggestionSay
-        ? `> "Say: ${suggestionSay}"`
-        : `> "Say: The useful way to think about ${topic} is the workflow it handles, the team it helps, and the outcome it improves — then we can narrow to the use case that matters most for you."`,
-      `- [ ] Next step to lock: pick the workflow or buyer outcome that matters most, then tailor the rest of the answer to that.`,
-    ].join('\n')
-  }
-
-  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && technicalKnowledge) {
-    return [
-      evidenceLine,
-      '',
-      `**In short:** Answer the technical question on **${topic}** directly — architecture or mechanism first, trade-off second.`,
-      `- Start with the actual system path: input, core processing, output, then the bottleneck or constraint that shapes the design.`,
-      suggestionSay
-        ? `> "Say: ${suggestionSay}"`
-        : `> "Say: The clearest way to explain ${topic} is the runtime path first, then the trade-off or bottleneck that changes the design in production."`,
-      `- If the transcript lacks the scale, version, or constraints, name that missing variable explicitly rather than guessing.`,
-      `- [ ] Next step to lock: ask whether they want the deeper component breakdown, the trade-offs, or the implementation path.`,
-    ].join('\n')
-  }
-
-  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && questionIntent === 'general_knowledge') {
+  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && knowledgeQuestion) {
     return [
       evidenceLine,
       '',
       `**In short:** Answer the question on **${topic}** itself first — then bridge it back to why it matters here.`,
       buildKnowledgeSupportLine(topic, category),
+      questionIntent === 'product_knowledge'
+        ? '- Treat it as a domain or product question: say what it is for, where it fits, and which variable would change the recommendation.'
+        : '- If the answer depends on scale, version, date, configuration, or policy, state that dependency plainly instead of bluffing.',
       suggestionSay
         ? `> "Say: ${suggestionSay}"`
         : `> "Say: The direct answer on ${topic} comes first — then I can connect it to the implication that matters most here."`,
-      '- If the answer depends on a version, date, configuration, or changing external fact, say that dependency clearly instead of bluffing.',
       `- [ ] Next step to lock: confirm whether they want more depth, a comparison, or the practical implication next.`,
     ].join('\n')
   }

@@ -246,9 +246,30 @@ export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): strin
   const transcriptSources = chunks
     .map((chunk) => chunk.text)
     .filter((text) => !isLowSignalSocialText(text))
-  const sources = [hint, ...questionTexts, ...transcriptSources].filter(Boolean)
+  const prioritizedSources = [hint, ...questionTexts].filter(Boolean)
+  const fallbackSources = transcriptSources
 
-  for (const source of sources) {
+  for (const source of prioritizedSources) {
+    for (const [pattern, canonical] of KNOWN_TECH_TERMS) {
+      if (pattern.test(source)) return canonical
+    }
+  }
+
+  for (const source of prioritizedSources) {
+    const acronyms = source.match(/\b[A-Z]{2,}(?:[-/][A-Z0-9]{2,})?\b/g) ?? []
+    const usefulAcronym = acronyms.find((token) => !LOW_VALUE_TOPIC_WORDS.has(token.toLowerCase()))
+    if (usefulAcronym) return usefulAcronym
+  }
+
+  for (const source of [...prioritizedSources, ...fallbackSources]) {
+    for (const pattern of QUESTION_TOPIC_PATTERNS) {
+      const match = source.match(pattern)
+      const normalized = match?.[1] ? normalizeTopicCandidate(match[1]) : null
+      if (normalized) return normalized
+    }
+  }
+
+  for (const source of fallbackSources) {
     for (const [pattern, canonical] of KNOWN_TECH_TERMS) {
       if (pattern.test(source)) return canonical
     }
@@ -256,14 +277,6 @@ export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): strin
     const acronyms = source.match(/\b[A-Z]{2,}(?:[-/][A-Z0-9]{2,})?\b/g) ?? []
     const usefulAcronym = acronyms.find((token) => !LOW_VALUE_TOPIC_WORDS.has(token.toLowerCase()))
     if (usefulAcronym) return usefulAcronym
-  }
-
-  for (const source of sources) {
-    for (const pattern of QUESTION_TOPIC_PATTERNS) {
-      const match = source.match(pattern)
-      const normalized = match?.[1] ? normalizeTopicCandidate(match[1]) : null
-      if (normalized) return normalized
-    }
   }
 
   const extractedTopics = extractTopics(chunks)

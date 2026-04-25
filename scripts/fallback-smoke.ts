@@ -166,12 +166,56 @@ assert(
   `prefers the buyer delivery question over later seller customization prompts`
 )
 assert(
-  mixedSalesSuggestions.some((s) => /delivery|order|custom/i.test(`${s.title} ${s.detail} ${s.say ?? ''}`)),
-  `fallback suggestions stay on delivery/order/customization instead of drifting`
+  mixedSalesSuggestions.some((s) => /timing|dependency|standard path|option|configuration/i.test(`${s.title} ${s.detail} ${s.say ?? ''}`)),
+  `fallback suggestions stay tied to the buyer question with axis-aware content instead of drifting`
 )
 assert(
   !mixedSalesSuggestions.some((s) => /latest topic|\[[A-Za-z][^[\]]*\]|what matters most is(?:…|\.{3}|$)/i.test(`${s.title} ${s.detail} ${s.say ?? ''}`)),
   `no latest-topic or placeholder scaffolds in mixed sales suggestions`
+)
+
+// ---------------------------------------------------------------------------
+// Scenario 7: World-knowledge question — location answer path
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 7] World-knowledge question — location answer path')
+
+const locationChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:06:10', text: 'Quick question, where is Los Angeles exactly?' },
+  { id: '2', timestamp: '00:06:18', text: 'And why does that location matter for West Coast logistics?' },
+]
+
+const locationSuggestions = buildFallbackSuggestions(locationChunks)
+
+assert(locationSuggestions.length === 3, 'returns 3 suggestions for a world-knowledge question')
+assert(
+  locationSuggestions.some((s) => s.type === 'answer'),
+  'includes an answer card for a direct knowledge question'
+)
+assert(
+  !locationSuggestions.some((s) => /delivery timing|order details|stock from customization|latest topic|production bottleneck/i.test(`${s.title} ${s.detail} ${s.say ?? ''}`)),
+  'does not regress into sales-specific or placeholder fallback cards for world knowledge'
+)
+
+// ---------------------------------------------------------------------------
+// Scenario 8: Research discussion — explainer path
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 8] Research discussion — explainer path')
+
+const researchChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:08:02', text: 'Can you explain the main contribution of this paper on mixture of experts routing?' },
+  { id: '2', timestamp: '00:08:14', text: 'And how does the method actually work in practice when tokens are assigned?' },
+]
+
+const researchSuggestions = buildFallbackSuggestions(researchChunks)
+
+assert(researchSuggestions.length === 3, 'returns 3 suggestions for a research explainer question')
+assert(
+  researchSuggestions.some((s) => s.type === 'answer' && /input to output|trade-off|happens first|works/i.test(`${s.detail} ${s.say ?? ''}`)),
+  'includes a direct explainer-style answer for the research question'
+)
+assert(
+  !researchSuggestions.some((s) => /order|delivery|customization|who owns that|latest topic/i.test(`${s.title} ${s.detail} ${s.say ?? ''}`)),
+  'does not drift into sales or generic meeting-close language for research discussion'
 )
 
 // ---------------------------------------------------------------------------
