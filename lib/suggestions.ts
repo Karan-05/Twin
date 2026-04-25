@@ -47,6 +47,8 @@ const SEMANTIC_STOPWORDS = new Set([
   'ask', 'asks', 'asking', 'question', 'point', 'talking', 'clarify', 'clarification', 'answer',
   'fact', 'check', 'next', 'step', 'steps', 'this', 'that', 'right', 'now', 'meeting', 'call'
 ])
+const WEAK_SINGLE_TOPIC_PATTERN = /^(?:answer (?:their|the)|clarify|get specific on)\s+([A-Za-z][A-Za-z0-9_-]{1,5})\b/i
+const LOW_SIGNAL_TITLE_TOPICS = new Set(['get', 'airs', 'rams', 'ones', 'plan', 'team', 'that', 'this'])
 
 interface SuggestionGenerationOptions {
   liveTranscriptPreview?: string
@@ -73,6 +75,7 @@ type QuestionAxis =
   | 'timing'
   | 'scope'
   | 'configuration'
+  | 'pricing'
   | 'comparison'
   | 'tradeoff'
   | 'implementation'
@@ -81,14 +84,31 @@ type QuestionAxis =
 
 function inferQuestionAxis(text: string, category: ReturnType<typeof inferQuestionCategory>): QuestionAxis {
   const lower = text.toLowerCase()
-  if (/\bwhen\b|\btimeline\b|\bdeadline\b|\blead time\b|\barrival\b|\bship|deliver/i.test(lower)) return 'timing'
+  if (/\bwhen\b|\btimeline\b|\bdeadline\b|\blead time\b|\barrival\b|\bship|deliver|\bthis week\b|\bnext week\b/i.test(lower)) return 'timing'
   if (/\bhow many\b|\bquantity\b|\bsize\b|\bscope\b|\bcount\b|\bnumber of\b/i.test(lower)) return 'scope'
-  if (/\bconfig\b|\bconfiguration\b|\bcustom\b|\bcustomization\b|\bsetup\b|\boption\b|\bvariant\b|\bsoftware\b|\binstall\b/i.test(lower)) return 'configuration'
+  if (/\bprice\b|\bpricing\b|\bbilling\b|\bbudget\b|\bcost\b|\bcharges?\b|\bdiscount\b|\binvoice\b|\bpayment\b|\bamount\b/i.test(lower)) return 'pricing'
+  if (/\bconfig\b|\bconfiguration\b|\bcustom\b|\bcustomization\b|\bsetup\b|\boption\b|\bvariant\b|\bsoftware\b|\binstall\b|\bram\b|\bgpu\b|\bcpu\b|\bstorage\b|\bspecs?\b|\bhardware\b/i.test(lower)) return 'configuration'
   if (/\bcompare\b|\bvs\b|\bversus\b|\bdifference\b|\bbetter\b/i.test(lower)) return 'comparison'
   if (/\btradeoff\b|\btrade-off\b|\bpros and cons\b|\bdownside\b|\bupside\b/i.test(lower)) return 'tradeoff'
-  if (/\bproof\b|\bevidence\b|\bsource\b|\bcitation\b|\bdata\b/i.test(lower)) return 'evidence'
+  if (/\bproof\b|\bevidence\b|\bsource\b|\bcitation\b|\bdata\b|\bconfirm\b|\bclaim\b|\btested\b/i.test(lower)) return 'evidence'
   if (category === 'implementation') return 'implementation'
   return 'general'
+}
+
+function buildAxisAwareTopic(
+  currentQuestion: string,
+  primaryTopic: string | null,
+  axis: QuestionAxis,
+  category: ReturnType<typeof inferQuestionCategory>
+): string {
+  if (axis === 'implementation') return 'rollout'
+  if (axis === 'pricing') return 'pricing and billing'
+  if (axis === 'timing' && /\bship|deliver|\bthis week\b|\bnext week\b/i.test(currentQuestion.toLowerCase())) return 'delivery timeline'
+  if (axis === 'configuration' && /\bram\b|\bgpu\b|\bcpu\b|\bstorage\b|\bspecs?\b|\bhardware\b/i.test(currentQuestion.toLowerCase())) return 'hardware specs'
+  if (axis === 'evidence' && /\bbattery\b|\bclaim\b|\bconfirm\b/i.test(currentQuestion.toLowerCase())) return 'claim basis'
+  if (primaryTopic && !/^(answer|question|fuzzy|probably|get|airs|rams|okay|thank)$/i.test(primaryTopic)) return primaryTopic
+  if (category === 'timing') return 'timing'
+  return currentQuestion
 }
 
 function buildAxisAwareAnswer(topic: string, axis: QuestionAxis, category: ReturnType<typeof inferQuestionCategory>): string {
@@ -99,6 +119,8 @@ function buildAxisAwareAnswer(topic: string, axis: QuestionAxis, category: Retur
       return `The direct answer on ${topic} should state the scope first, then whether one setup fits all cases or a split is needed.`
     case 'configuration':
       return `The direct answer on ${topic} should separate the standard path from optional configuration choices that change the recommendation.`
+    case 'pricing':
+      return `The direct answer on ${topic} should separate the base charge, any variable charges, and the one term that would change the total.`
     case 'comparison':
       return `The cleanest answer on ${topic} is to compare it on one axis first, then add the consequence of that difference.`
     case 'tradeoff':
@@ -134,6 +156,13 @@ function buildAxisAwareTalkingPoint(topic: string, axis: QuestionAxis): { title:
         detail: 'Frame the default path separately from optional configuration choices. That makes the recommendation easier to act on.',
         say: `The useful way to answer ${topic} is to separate the standard path from the optional choices that change the decision.`,
         listenFor: 'Whether they need the standard path or a non-default option.',
+      }
+    case 'pricing':
+      return {
+        title: 'Separate base from extras',
+        detail: 'Split the base price from any optional charges, support, or deployment costs. That keeps the answer concrete and avoids billing ambiguity.',
+        say: `The useful way to answer ${topic} is to separate the base cost from any extra charges or optional services.`,
+        listenFor: 'Which fee or pricing term will actually drive the decision.',
       }
     case 'comparison':
       return {
@@ -195,6 +224,13 @@ function buildAxisAwareQuestion(topic: string, axis: QuestionAxis): { title: str
         detail: 'Ask which option or configuration actually matters so the answer stays tied to the real decision.',
         say: `Which option or configuration matters most on ${topic} here — the standard path or a non-default one?`,
         listenFor: 'The option that should drive the recommendation.',
+      }
+    case 'pricing':
+      return {
+        title: `Clarify ${topic} terms`,
+        detail: 'Ask which pricing term actually matters most so the answer can stay concrete instead of hand-wavy.',
+        say: `Which part of ${topic} matters most here — base price, bulk discount, support, or payment terms?`,
+        listenFor: 'The pricing term that will change whether they move forward.',
       }
     case 'comparison':
       return {
@@ -490,6 +526,8 @@ function sanitizeSuggestions(
     if (title.length < 6 || detail.length < 30) continue
     if (GENERIC_TITLE_PATTERN.test(title)) continue
     if (PLACEHOLDER_PATTERN.test(`${title} ${detail} ${say ?? ''}`)) continue
+    const weakSingleTopic = title.match(WEAK_SINGLE_TOPIC_PATTERN)?.[1]?.toLowerCase()
+    if (weakSingleTopic && LOW_SIGNAL_TITLE_TOPICS.has(weakSingleTopic)) continue
 
     const key = title.toLowerCase()
     if (seenTitles.has(key)) continue
@@ -729,16 +767,8 @@ export function buildFallbackSuggestions(
   }
 
   if (currentQuestion && questionIntent && questionIntent !== 'meeting_coaching') {
-    const topic = compactTopic(
-      questionCategory === 'implementation'
-        ? 'rollout'
-        : primaryTopic && !/^(answer|question|fuzzy|probably)$/i.test(primaryTopic)
-          ? primaryTopic
-          : questionCategory === 'timing'
-            ? 'timing'
-            : currentQuestion
-    )
     const axis = inferQuestionAxis(currentQuestion, questionCategory ?? 'general')
+    const topic = compactTopic(buildAxisAwareTopic(currentQuestion, primaryTopic, axis, questionCategory ?? 'general'))
     const talkingPoint = buildAxisAwareTalkingPoint(topic, axis)
     const clarifier = buildAxisAwareQuestion(topic, axis)
     fallbacks.push(

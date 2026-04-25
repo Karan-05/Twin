@@ -273,6 +273,38 @@ assert(
 )
 
 // ---------------------------------------------------------------------------
+// Scenario 11: Hardware specs + billing question — no junk topic labels
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 11] Hardware specs and billing — no junk topic labels')
+
+const hardwareBillingChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '14:49:20', text: 'What kind of RAM and GPU are we going to get in the hardware specs?' },
+  { id: '2', timestamp: '14:51:41', text: 'Can you tell me more about the billing process? What amount is going to be included and what are the charges?' },
+]
+
+const hardwareBillingContext: MeetingContext = {
+  meetingType: 'Sales Call',
+  userRole: 'Seller',
+  goal: 'Answer the buyer directly on specs and billing',
+}
+
+const hardwareBillingState = deriveMeetingState(hardwareBillingChunks, hardwareBillingContext)
+const hardwareBillingSuggestions = buildFallbackSuggestions(hardwareBillingChunks, hardwareBillingContext, hardwareBillingState)
+
+assert(
+  hardwareBillingState.currentQuestion?.toLowerCase().includes('charges') ?? false,
+  'prefers the later buyer pricing question over the earlier specs question'
+)
+assert(
+  hardwareBillingSuggestions.some((s) => /pricing and billing|hardware specs|base cost|charges|payment terms/i.test(`${s.title} ${s.detail} ${s.say ?? ''}`)),
+  'uses billing/specs language instead of junk placeholder topics'
+)
+assert(
+  !hardwareBillingSuggestions.some((s) => /\bget\b|\bairs\b|\brams\b|latest topic/i.test(`${s.title} ${s.detail} ${s.say ?? ''}`)),
+  'does not surface junk topic labels like get, Airs, Rams, or latest topic'
+)
+
+// ---------------------------------------------------------------------------
 // Results
 // ---------------------------------------------------------------------------
 console.log(`\n${'─'.repeat(50)}`)

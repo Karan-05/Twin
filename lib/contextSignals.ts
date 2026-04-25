@@ -67,14 +67,14 @@ const STOPWORDS = new Set([
   'actual', 'entire', 'general', 'certain', 'specific', 'different', 'important', 'possible',
   'large', 'small', 'long', 'short', 'high', 'able', 'using', 'used', 'use', 'work', 'works',
   'good', 'great', 'best', 'better', 'right', 'wrong', 'help', 'helps', 'helped',
-  'thank', 'thanks',
+  'thank', 'thanks', 'get', 'got', 'gonna', 'okay',
 ])
 
 const LOW_VALUE_TOPIC_WORDS = new Set([
   'latest', 'topic', 'topics', 'conversation', 'conversations', 'discussion', 'discuss',
   'existence', 'everything', 'something', 'stuff', 'things', 'awesome', 'important',
   'process', 'system', 'architecture',
-  'answer', 'question', 'fuzzy', 'probably',
+  'answer', 'question', 'fuzzy', 'probably', 'get', 'airs', 'rams', 'okay', 'thank',
 ])
 
 const KNOWN_TECH_TERMS: Array<[RegExp, string]> = [
@@ -92,9 +92,19 @@ const KNOWN_TECH_TERMS: Array<[RegExp, string]> = [
   [/\bocr\b/i, 'OCR'],
 ]
 
+const STABLE_DOMAIN_TOPICS: Array<[RegExp, string]> = [
+  [/\b(billing process|billing|charges?|pricing|price|payment terms?|bulk discount|invoice)\b/i, 'pricing and billing'],
+  [/\b(ram|gpu|cpu|storage|hardware specs?|specs?)\b/i, 'hardware specs'],
+  [/\b(ship|shipping|deliver|delivery|lead time|this week|next week)\b/i, 'delivery timeline'],
+  [/\b(battery|claim|confirm|source|tested)\b/i, 'claim basis'],
+]
+
 const QUESTION_TOPIC_PATTERNS = [
   /\b(?:what have you .*?learned about|what did you learn about|what have you learned about)\s+(.+?)(?:[?.,]|$)/i,
   /\b(?:how should we think about)\s+(.+?)(?:[?.,]|$)/i,
+  /\b(?:can you tell me more about|tell me more about|what would you like to know about)\s+(.+?)(?:[?.,]|$)/i,
+  /\b(?:confirm|verify)\s+the\s+(.+?)\s+claim(?:[?.,]|$)/i,
+  /\b(?:what kind of)\s+(.+?)(?:\s+(?:are|is|do|would|will|can)\b|[?.,]|$)/i,
   /\bhow\s+(.+?)\s+works?\b/i,
   /\b(?:what is|what's|how does|how do|explain|walk me through|tell me about|talk about|discuss(?:ing)?)\s+(.+?)(?:[?.,]|$)/i,
 ]
@@ -109,7 +119,7 @@ const DEEP_TECH_SIGNAL_PATTERN = /\b(tokenization|tokenisation|embedding|embeddi
 const SHALLOW_TECH_PATTERN = /\bhow (does|do|can|to)\b.*\b(work|works|system|platform|agent|pipeline|integration|architecture|api|security|model)\b/i
 const DIRECT_KNOWLEDGE_PATTERN = /\b(what is|what's|where is|where are|who is|who are|when is|when did|why does|why do|how does|how do|how can|how to|define|explain|tell me about|walk me through|difference between|compare|versus|vs|meaning of)\b/i
 const MEETING_CONTROL_PATTERN = /\b(who owns|owner|by when|next step|before we wrap|can you be more specific|what should we do|should we|do we want to|what do you think|what would make|would you like to know more|does that make sense|sound good|what workflow matters|who else will weigh in)\b/i
-const DOMAIN_KNOWLEDGE_PATTERN = /\b(what kind of|what does .* do|who is .* for|how is .* used|use case|workflow|configuration|configurations|pricing|plan|tier|sku|edition|package|feature set|capabilities|model|ram|storage|gpu|specs?|delivery|shipping|lead time|customization|software)\b/i
+const DOMAIN_KNOWLEDGE_PATTERN = /\b(what kind of|what does .* do|who is .* for|how is .* used|use case|workflow|configuration|configurations|pricing|price|billing|charges?|payment terms?|plan|tier|sku|edition|package|feature set|capabilities|model|ram|storage|gpu|cpu|specs?|hardware|delivery|shipping|lead time|customization|software|battery)\b/i
 const PARTICIPANT_ANSWER_PATTERN = /\b(can you|could you|would you|why did you|how did you|what did you|where did you|when did you|who did you)\b/i
 const SHORT_BINARY_CHECK_PATTERN = /^(?:is it|is that|are they|are there)\b/i
 
@@ -222,6 +232,7 @@ function normalizeTopicCandidate(raw: string): string | null {
   const cleaned = raw
     .replace(/^["'`(\[]+|["'`)\]]+$/g, '')
     .replace(/^(how|what|why|when|where|who|which|tell|explain|walk)\s+/i, '')
+    .replace(/\b(?:are|is|do|does|did|would|will|can|could|should|gonna|going to|get|have|want|need)\b.*$/i, '')
     .replace(/\s+/g, ' ')
     .trim()
 
@@ -248,6 +259,18 @@ function normalizeTopicCandidate(raw: string): string | null {
   return candidate
 }
 
+function extractNamedPhrase(source: string): string | null {
+  const phrases = source.match(/\b(?:[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)*)(?:\s+[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)*){0,2}\b/g) ?? []
+  const useful = phrases.find((phrase) => {
+    const lower = phrase.toLowerCase()
+    if (LOW_VALUE_TOPIC_WORDS.has(lower)) return false
+    if (STOPWORDS.has(lower)) return false
+    if (/^(can|could|would|should|what|when|where|who|why|how|okay|thank)$/i.test(phrase)) return false
+    return phrase.length >= 4
+  })
+  return useful ?? null
+}
+
 export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): string | null {
   const questionTexts = extractQuestions(chunks)
     .map((line) => line.text)
@@ -259,6 +282,10 @@ export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): strin
   const fallbackSources = transcriptSources
 
   for (const source of prioritizedSources) {
+    for (const [pattern, canonical] of STABLE_DOMAIN_TOPICS) {
+      if (pattern.test(source)) return canonical
+    }
+
     for (const [pattern, canonical] of KNOWN_TECH_TERMS) {
       if (pattern.test(source)) return canonical
     }
@@ -271,6 +298,11 @@ export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): strin
   }
 
   for (const source of [...prioritizedSources, ...fallbackSources]) {
+    const named = extractNamedPhrase(source)
+    if (named) return named
+  }
+
+  for (const source of [...prioritizedSources, ...fallbackSources]) {
     for (const pattern of QUESTION_TOPIC_PATTERNS) {
       const match = source.match(pattern)
       const normalized = match?.[1] ? normalizeTopicCandidate(match[1]) : null
@@ -279,6 +311,10 @@ export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): strin
   }
 
   for (const source of fallbackSources) {
+    for (const [pattern, canonical] of STABLE_DOMAIN_TOPICS) {
+      if (pattern.test(source)) return canonical
+    }
+
     for (const [pattern, canonical] of KNOWN_TECH_TERMS) {
       if (pattern.test(source)) return canonical
     }
