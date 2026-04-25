@@ -120,13 +120,15 @@ function SuggestionCard({
 function BatchBlock({
   batch,
   isNew,
+  defaultCollapsed,
   onClickDetail,
 }: {
   batch: SuggestionBatch
   isNew: boolean
+  defaultCollapsed?: boolean
   onClickDetail: (s: Suggestion) => void
 }) {
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false)
 
   return (
     <div className="space-y-1.5">
@@ -398,6 +400,7 @@ export default function SuggestionsPanel() {
             key={batch.id}
             batch={batch}
             isNew={i === 0}
+            defaultCollapsed={i > 0}
             onClickDetail={handleClickDetail}
           />
         ))}

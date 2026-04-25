@@ -398,10 +398,6 @@ export default function TranscriptPanel() {
     }, SENTIMENT_DEBOUNCE_MS)
   }, [transcript.length, updateChunkSentiment])
 
-  useEffect(() => {
-    setMeetingState(deriveMeetingState(transcript, meetingContext, ''))
-  }, [meetingContext, setMeetingState, transcript])
-
   const handleCopy = (id: string, text: string) => {
     navigator.clipboard.writeText(text)
     setCopied(id)
@@ -425,9 +421,10 @@ export default function TranscriptPanel() {
     const state = deriveMeetingState(transcriptRef.current, meetingContextRef.current, previewText)
     setMeetingState(state)
 
-    if (!state.triggerReason) return
+    const effectiveReason = state.triggerReason ?? (state.decisionFocus ? 'focus_shift' : null)
+    if (!effectiveReason) return
 
-    const fingerprint = `${state.triggerReason}:${state.questionIntent ?? ''}:${state.currentQuestion ?? ''}:${state.riskyClaim ?? ''}:${state.blocker ?? ''}:${state.loopStatus ?? ''}`
+    const fingerprint = `${effectiveReason}:${state.questionIntent ?? ''}:${state.currentQuestion ?? ''}:${state.decisionFocus ?? ''}:${state.riskyClaim ?? ''}:${state.blocker ?? ''}:${state.loopStatus ?? ''}`
     const now = Date.now()
 
     if (fingerprint === lastTriggerFingerprintRef.current) return
@@ -437,10 +434,15 @@ export default function TranscriptPanel() {
     lastTriggerFingerprintRef.current = fingerprint
     window.dispatchEvent(
       new CustomEvent('meeting-copilot:suggestion-trigger', {
-        detail: { reason: state.triggerReason },
+        detail: { reason: effectiveReason },
       })
     )
   }, [setMeetingState])
+
+  useEffect(() => {
+    if (liveTranscriptPreview.trim()) return
+    updateDerivedState('')
+  }, [liveTranscriptPreview, meetingContext, transcript, updateDerivedState])
 
   const commitStableText = useCallback((text: string) => {
     const cleaned = text.trim()

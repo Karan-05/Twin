@@ -71,6 +71,7 @@ Read the [JUST SAID] line carefully. Identify:
 - Never produce a weak answer suggestion that is just "yes", "I'm comfortable with that", generic enthusiasm, or a paraphrase of the question. If type="answer", make it high-signal.
 - For Sales Call and Investor Pitch: when a direct question was just asked (answer-first mode), the second or third suggestion must advance toward a concrete commitment, timeline, or next step — not just another angle on the same answer.
 - KNOWLEDGE QUESTIONS (any meeting type): when the transcript contains a direct factual, explainer, comparison, product, or technical question, you MAY use durable domain knowledge to supply the actual answer structure and key components to cover. Answer the question itself first. Do NOT leave "[your key point]" as the answer. For changing facts (today's pricing, current configuration by year/model, legal/policy status, live availability), do not guess — give the stable frame, name the missing variable, and keep the answer scoped.
+- NEVER produce a "say" field that is an incomplete trailing phrase like "what matters most is…", "the key thing here is…", or "here's the answer:". Every "say" must be a complete, immediately speakable sentence that ends with actual content — not a setup for content that was never written.
 
 Respond ONLY with valid JSON — no markdown, no preamble:
 [{"type":"...","title":"...","detail":"...","say":"...","why_now":"...","listen_for":"..."},{"type":"...","title":"...","detail":"...","say":"...","why_now":"...","listen_for":"..."}]`

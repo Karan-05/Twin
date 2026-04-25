@@ -1,8 +1,8 @@
 import type { MeetingContext, TranscriptChunk } from './store'
 import type { QuestionIntent } from './contextSignals'
-import { extractConversationSignals, inferQuestionIntent, selectActionableQuestion } from './contextSignals'
+import { extractConversationSignals, extractPrimaryTopic, inferQuestionIntent, selectActionableQuestion } from './contextSignals'
 
-export type SuggestionTriggerReason = 'question' | 'risky_claim' | 'blocker' | 'deadline' | 'loop'
+export type SuggestionTriggerReason = 'question' | 'risky_claim' | 'blocker' | 'deadline' | 'loop' | 'focus_shift'
 
 export interface MeetingState {
   mode: 'answer' | 'unblock' | 'decide' | 'probe' | 'close'
@@ -47,8 +47,7 @@ function deriveLoopStatus(chunks: TranscriptChunk[]): string | null {
     return 'Conversation appears to be looping without a decision rule.'
   }
 
-  const signals = extractConversationSignals(chunks)
-  const repeatedTopic = signals.topics[0]
+  const repeatedTopic = extractPrimaryTopic(chunks)
   if (repeatedTopic) {
     const count = chunks.filter((chunk) => chunk.text.toLowerCase().includes(repeatedTopic)).length
     if (count >= 3) {
@@ -59,11 +58,9 @@ function deriveLoopStatus(chunks: TranscriptChunk[]): string | null {
   return null
 }
 
-function deriveDecisionFocus(chunks: TranscriptChunk[], ctx: MeetingContext): string | null {
-  const signals = extractConversationSignals(chunks)
-  if (signals.topics.length > 0) {
-    return signals.topics.slice(0, 2).join(' / ')
-  }
+function deriveDecisionFocus(chunks: TranscriptChunk[], ctx: MeetingContext, currentQuestion: string | null): string | null {
+  const primaryTopic = extractPrimaryTopic(chunks, `${currentQuestion ?? ''} ${ctx.goal ?? ''}`)
+  if (primaryTopic) return primaryTopic
   if (ctx.goal) return ctx.goal
   return null
 }
@@ -88,7 +85,7 @@ export function deriveMeetingState(
   const deadlineSignal = signals.commitments.find((line) => DEADLINE_PATTERN.test(line.text))?.text
     ?? (signals.risks.find((line) => DEADLINE_PATTERN.test(line.text))?.text ?? null)
   const loopStatus = deriveLoopStatus(chunks)
-  const decisionFocus = deriveDecisionFocus(chunks, meetingContext)
+  const decisionFocus = deriveDecisionFocus(chunks, meetingContext, currentQuestion)
   const stakeholderSignals = collectStakeholders(chunks, meetingContext.prepNotes)
 
   let mode: MeetingState['mode'] = 'probe'
@@ -104,6 +101,7 @@ export function deriveMeetingState(
   else if (blocker) triggerReason = 'blocker'
   else if (deadlineSignal) triggerReason = 'deadline'
   else if (loopStatus) triggerReason = 'loop'
+  else if (decisionFocus) triggerReason = 'focus_shift'
 
   return {
     mode,

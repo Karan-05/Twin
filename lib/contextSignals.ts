@@ -32,6 +32,10 @@ export type QuestionIntent =
   | 'product_knowledge'
   | 'technical_knowledge'
 
+interface QuestionCandidate extends SignalLine {
+  resolvedInChunk: boolean
+}
+
 const QUESTION_PREFIXES = [
   'what', 'why', 'how', 'when', 'where', 'who', 'which', 'would', 'could', 'should', 'can', 'do',
   'does', 'did', 'is', 'are', 'was', 'were', 'will', 'have', 'has', 'had'
@@ -53,7 +57,7 @@ const STOPWORDS = new Set([
   'who', 'your', 'you', 'our', 'ours', 'we', 'us', 'for', 'are', 'was', 'were', 'been', 'being',
   'will', 'just', 'said', 'says', 'also', 'only', 'really', 'very', 'more', 'most', 'much', 'many',
   'some', 'like', 'kind', 'sort', 'need', 'want', 'make', 'made', 'does', 'doing', 'did', 'done',
-  'can', 'cant', 'cannot', 'not', 'yes', 'yeah', 'okay', 'well', 'right', 'maybe', 'into', 'over',
+  'can', 'cant', 'cannot', 'not', 'yes', 'yeah', 'okay', 'well', 'right', 'maybe', 'how', 'any', 'into', 'over',
   'under', 'than', 'after', 'before', 'because', 'through', 'across', 'around', 'meeting', 'call',
   // adjectives, adverbs, common verbs that pollute topic extraction in sales/marketing speech
   'real', 'time', 'new', 'always', 'never', 'every', 'human', 'based', 'available', 'working',
@@ -93,14 +97,26 @@ const QUESTION_TOPIC_PATTERNS = [
 
 const SELLERISH_ROLE_PATTERN = /\b(seller|account executive|sales manager)\b/i
 const LOW_SIGNAL_SALES_QUESTION_PATTERN = /\b(would you like to know more|does that make sense|how does that sound|sound good|would that help|would that be useful|what do you think about that|is that something you'd want)\b/i
+const LOW_SIGNAL_SOCIAL_PATTERN = /\b(how are you|how's it going|what's up|where are you (?:living|staying|based|located)|where do you live|brother|thank you)\b/i
+const SELLER_DISCOVERY_PROMPT_PATTERN = /^(?:can you share|could you share|would you like|do you want|how would you want|what would you like|anything special|is there anything|is it|can we|should we)\b/i
+const ANSWERISH_SENTENCE_PATTERN = /^(?:yes|yeah|yep|no|nope|i\b|we\b|they\b|about\b|around\b|roughly\b|approximately\b|tens?\b|a few\b|not really\b|i don't think so\b|that works\b|sounds good\b|fine\b|okay\b)/i
 const DEEP_TECH_SIGNAL_PATTERN = /\b(tokenization|tokenisation|embedding|embeddings|transformer|attention|next token|inference|latency|throughput|architecture|pipeline|security|api|integration|model|scal(?:e|ing)|hallucinat)\b/i
 const SHALLOW_TECH_PATTERN = /\bhow (does|do|can|to)\b.*\b(work|works|system|platform|agent|pipeline|integration|architecture|api|security|model)\b/i
 const DIRECT_KNOWLEDGE_PATTERN = /\b(what is|what's|where is|where are|who is|who are|when is|when did|why does|why do|how does|how do|how can|how to|define|explain|tell me about|walk me through|difference between|compare|versus|vs|meaning of)\b/i
 const MEETING_CONTROL_PATTERN = /\b(who owns|owner|by when|next step|before we wrap|can you be more specific|what should we do|should we|do we want to|what do you think|what would make|how should we think about|would you like to know more|does that make sense|sound good|what workflow matters|who else will weigh in)\b/i
 const PRODUCT_KNOWLEDGE_PATTERN = /\b(what kind of|what does .* do|who is .* for|how is .* used|use case|workflow|configuration|configurations|pricing|plan|tier|sku|edition|package|feature set|capabilities)\b/i
+const CONCRETE_PRODUCT_SIGNAL_PATTERN = /\b(deliver|delivery|ship|shipping|timeline|lead time|price|pricing|budget|quantity|how many|units?|seats?|licenses?|configuration|customization|software|engrave|engraved|color|colour|space gray|space grey|model|ram|storage|gpu|specs?)\b/i
 
 function cleanText(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
+}
+
+function stripQuestionLeadIn(text: string): string {
+  return cleanText(text).replace(/^(?:(?:so|hey|well|um|uh|and|but|also|okay|right|yeah|now|like|alright|actually|basically)\s+){1,3}/i, '').trim()
+}
+
+function isLowSignalSocialText(text: string): boolean {
+  return LOW_SIGNAL_SOCIAL_PATTERN.test(text.toLowerCase())
 }
 
 function splitSentences(text: string): string[] {
@@ -130,23 +146,35 @@ function trimSignal(text: string, maxLength = 110): string {
   return `${text.slice(0, maxLength - 1).trimEnd()}…`
 }
 
-function extractQuestions(chunks: TranscriptChunk[]): SignalLine[] {
-  const lines: SignalLine[] = []
+function extractQuestionCandidates(chunks: TranscriptChunk[]): QuestionCandidate[] {
+  const lines: QuestionCandidate[] = []
 
   for (const chunk of chunks) {
-    for (const sentence of splitSentences(chunk.text)) {
+    const sentences = splitSentences(chunk.text)
+    for (let index = 0; index < sentences.length; index += 1) {
+      const sentence = sentences[index]
       const lower = sentence.toLowerCase()
       if (
         sentence.includes('?') ||
         QUESTION_PREFIXES.some((prefix) => lower.startsWith(`${prefix} `)) ||
         INDIRECT_QUESTION_RE.test(lower)
       ) {
-        lines.push({ timestamp: chunk.timestamp, text: trimSignal(sentence) })
+        const nextSentence = sentences[index + 1] ?? ''
+        const normalized = stripQuestionLeadIn(sentence)
+        lines.push({
+          timestamp: chunk.timestamp,
+          text: trimSignal(normalized || sentence),
+          resolvedInChunk: ANSWERISH_SENTENCE_PATTERN.test(stripQuestionLeadIn(nextSentence)),
+        })
       }
     }
   }
 
-  return dedupeSignalLines(lines.reverse())
+  return dedupeSignalLines(lines.reverse(), 6) as QuestionCandidate[]
+}
+
+function extractQuestions(chunks: TranscriptChunk[]): SignalLine[] {
+  return extractQuestionCandidates(chunks).map(({ timestamp, text }) => ({ timestamp, text }))
 }
 
 function extractChunkMatches(chunks: TranscriptChunk[], pattern: RegExp, limit = 3): SignalLine[] {
@@ -162,6 +190,7 @@ function extractTopics(chunks: TranscriptChunk[], limit = 5): string[] {
   const scores = new Map<string, number>()
 
   chunks.forEach((chunk, chunkIndex) => {
+    if (isLowSignalSocialText(chunk.text)) return
     const weight = chunkIndex === chunks.length - 1 ? 2 : 1
     const words = cleanText(chunk.text)
       .toLowerCase()
@@ -169,6 +198,7 @@ function extractTopics(chunks: TranscriptChunk[], limit = 5): string[] {
 
     words.forEach((word) => {
       if (STOPWORDS.has(word)) return
+      if (LOW_VALUE_TOPIC_WORDS.has(word)) return
       scores.set(word, (scores.get(word) ?? 0) + weight)
     })
   })
@@ -210,8 +240,13 @@ function normalizeTopicCandidate(raw: string): string | null {
 }
 
 export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): string | null {
-  const questionTexts = extractQuestions(chunks).map((line) => line.text)
-  const sources = [hint, ...questionTexts, ...chunks.map((chunk) => chunk.text)].filter(Boolean)
+  const questionTexts = extractQuestions(chunks)
+    .map((line) => line.text)
+    .filter((line) => !isLowSignalSocialText(line))
+  const transcriptSources = chunks
+    .map((chunk) => chunk.text)
+    .filter((text) => !isLowSignalSocialText(text))
+  const sources = [hint, ...questionTexts, ...transcriptSources].filter(Boolean)
 
   for (const source of sources) {
     for (const [pattern, canonical] of KNOWN_TECH_TERMS) {
@@ -240,16 +275,27 @@ export function selectActionableQuestion(
   chunks: TranscriptChunk[],
   context?: { meetingType?: string; userRole?: string }
 ): SignalLine | null {
-  const questions = extractQuestions(chunks)
+  const questions = extractQuestionCandidates(chunks)
   if (questions.length === 0) return null
 
   const sellerishSalesContext =
     context?.meetingType === 'Sales Call' &&
     SELLERISH_ROLE_PATTERN.test(context?.userRole ?? '')
 
-  if (!sellerishSalesContext) return questions[0]
+  const unresolved = questions.filter((line) => !line.resolvedInChunk)
+  if (!sellerishSalesContext) return unresolved[0] ?? questions[0]
 
-  return questions.find((line) => !LOW_SIGNAL_SALES_QUESTION_PATTERN.test(line.text)) ?? questions[0]
+  return unresolved.find((line) =>
+    !LOW_SIGNAL_SALES_QUESTION_PATTERN.test(line.text) &&
+    !LOW_SIGNAL_SOCIAL_PATTERN.test(line.text) &&
+    !SELLER_DISCOVERY_PROMPT_PATTERN.test(stripQuestionLeadIn(line.text))
+  ) ?? unresolved.find((line) =>
+    !LOW_SIGNAL_SALES_QUESTION_PATTERN.test(line.text) &&
+    !LOW_SIGNAL_SOCIAL_PATTERN.test(line.text)
+  ) ?? unresolved[0] ?? questions.find((line) =>
+    !LOW_SIGNAL_SALES_QUESTION_PATTERN.test(line.text) &&
+    !LOW_SIGNAL_SOCIAL_PATTERN.test(line.text)
+  ) ?? questions[0]
 }
 
 export function isTechnicalQuestion(
@@ -260,7 +306,7 @@ export function isTechnicalQuestion(
 }
 
 export function inferQuestionCategory(text: string): QuestionCategory {
-  const lower = text.toLowerCase()
+  const lower = stripQuestionLeadIn(text).toLowerCase()
   if (/\bwhere is\b|\bwhere are\b|\blocated\b|\blocation\b/.test(lower)) return 'location'
   if (/\bwho is\b|\bwho are\b|\bwhose\b/.test(lower)) return 'person'
   if (/\bwhen is\b|\bwhen did\b|\bwhat year\b|\bwhat time\b|\bwhen does\b/.test(lower)) return 'timing'
@@ -277,13 +323,15 @@ export function inferQuestionIntent(
   text: string,
   context?: { meetingType?: string; userRole?: string }
 ): QuestionIntent {
-  const lower = cleanText(text).toLowerCase()
+  const lower = stripQuestionLeadIn(text).toLowerCase()
   const sellerishSalesContext =
     context?.meetingType === 'Sales Call' &&
     SELLERISH_ROLE_PATTERN.test(context?.userRole ?? '')
 
   if (LOW_SIGNAL_SALES_QUESTION_PATTERN.test(lower)) return 'meeting_coaching'
+  if (LOW_SIGNAL_SOCIAL_PATTERN.test(lower)) return 'meeting_coaching'
   if (MEETING_CONTROL_PATTERN.test(lower)) return 'meeting_coaching'
+  if (sellerishSalesContext && SELLER_DISCOVERY_PROMPT_PATTERN.test(lower)) return 'meeting_coaching'
 
   if (sellerishSalesContext && PRODUCT_KNOWLEDGE_PATTERN.test(lower) && !DEEP_TECH_SIGNAL_PATTERN.test(lower)) {
     return 'product_knowledge'
@@ -297,6 +345,10 @@ export function inferQuestionIntent(
   }
 
   if (sellerishSalesContext && DIRECT_KNOWLEDGE_PATTERN.test(lower)) {
+    return 'product_knowledge'
+  }
+
+  if (sellerishSalesContext && CONCRETE_PRODUCT_SIGNAL_PATTERN.test(lower)) {
     return 'product_knowledge'
   }
 

@@ -3,14 +3,12 @@ import { generateId, formatTimestamp } from './utils'
 import { withRetry } from './retry'
 import type { Suggestion, SuggestionBatch, TranscriptChunk, MeetingContext } from './store'
 import type { AppSettings } from './settings'
-import type { QuestionCategory } from './contextSignals'
 import {
   buildConversationSignalsSection,
   extractConversationSignals,
   extractPrimaryTopic,
   inferQuestionCategory,
   inferQuestionIntent,
-  isTechnicalQuestion,
   selectActionableQuestion,
 } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
@@ -22,157 +20,6 @@ const VALID_TYPES = new Set(['question', 'talking_point', 'answer', 'fact_check'
 const OWNER_OR_TIMELINE_PATTERN = /\b(owner|who can|who owns|make the call|deadline|by when|tomorrow|friday|next step|follow up|escalat|workaround|qa|legal|security review|q[1-4])\b/i
 const SUGGESTION_MAX_TOKENS = 900
 
-// Common English words that appear sentence-initial (capitalized) in speech transcripts but
-// are not topic labels. Stopwords do the semantic work; length >= 4 handles the residual
-// 2–3-char words (And, Can, So, Hey, etc.).
-const TOPIC_LABEL_STOPWORDS = new Set([
-  'him', 'his', 'her', 'its', 'our', 'you', 'your', 'they', 'them', 'their',
-  'are', 'ask', 'been', 'being', 'can', 'come', 'could', 'did', 'does', 'done',
-  'give', 'get', 'gets', 'going', 'got', 'had', 'has', 'have', 'help', 'keep',
-  'know', 'let', 'look', 'make', 'may', 'might', 'move', 'must', 'need', 'put',
-  'run', 'said', 'say', 'see', 'set', 'should', 'show', 'take', 'tell', 'think',
-  'try', 'turn', 'used', 'want', 'was', 'went', 'were', 'will', 'with', 'work',
-  'would', 'also', 'away', 'back', 'basically', 'definitely', 'down', 'each',
-  'even', 'every', 'exactly', 'few', 'first', 'good', 'high', 'how', 'just',
-  'kind', 'last', 'like', 'long', 'low', 'many', 'more', 'most', 'much', 'never',
-  'new', 'next', 'not', 'now', 'off', 'often', 'okay', 'only', 'out', 'over',
-  'own', 'quite', 'rather', 'really', 'right', 'same', 'some', 'still', 'such',
-  'sure', 'than', 'then', 'there', 'these', 'those', 'through', 'too', 'under',
-  'until', 'upon', 'usually', 'very', 'well', 'whether', 'while', 'yet',
-  'what', 'when', 'where', 'which', 'who', 'whom', 'whose',
-  'about', 'above', 'across', 'after', 'against', 'ahead', 'along', 'although',
-  'always', 'among', 'another', 'around', 'because', 'before', 'below',
-  'between', 'both', 'but', 'during', 'either', 'enough', 'except', 'following',
-  'for', 'from', 'further', 'hence', 'however', 'including', 'instead', 'into',
-  'nothing', 'once', 'overall', 'perhaps', 'please', 'several', 'simply',
-  'since', 'somehow', 'something', 'sometimes', 'somewhere', 'that', 'therefore',
-  'this', 'though', 'together', 'toward', 'whatever', 'whenever', 'wherever',
-  'within', 'without', 'absolutely', 'actually', 'again', 'already', 'sorry',
-  'thank', 'thanks', 'yeah', 'yes', 'hey', 'hello',
-  // number words that appear as garbled transcription artifacts
-  'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
-  'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen',
-  'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty', 'fifty',
-  'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'thousand', 'million', 'billion',
-  // generic filler words that produce low-value topic labels
-  'thing', 'things', 'point', 'points', 'issue', 'issues', 'item', 'items',
-  'part', 'parts', 'side', 'time', 'times', 'type', 'types', 'way', 'ways',
-  'place', 'case', 'cases', 'fact', 'facts', 'area', 'areas', 'level', 'levels',
-  'data', 'note', 'notes', 'step', 'steps', 'word', 'words', 'line', 'lines',
-  // adjectives/adverbs that shouldn't be standalone topic labels
-  'real', 'always', 'never', 'every', 'human', 'based', 'available', 'working',
-  'actual', 'entire', 'general', 'certain', 'specific', 'different', 'important',
-  'large', 'small', 'long', 'short', 'high', 'able', 'using', 'used',
-])
-
-function extractTopicLabels(chunks: TranscriptChunk[]): string[] {
-  const combined = chunks.map((chunk) => chunk.text).join(' ')
-  const matches = combined.match(/\b(?:[A-Z][a-z]+|[A-Z]{2,})(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}|AI|Speech|Studio|Audio|Labs))*\b/g) ?? []
-  const cleaned = matches
-    .map((item) => item.trim())
-    .filter((item) => item.length >= 4)
-    .filter((item) => !TOPIC_LABEL_STOPWORDS.has(item.toLowerCase()))
-    .filter((item) => !TOPIC_LABEL_STOPWORDS.has(item.split(' ').pop()!.toLowerCase()))
-
-  return Array.from(new Set(cleaned)).slice(0, 5)
-}
-
-function compactTopic(topic?: string): string {
-  if (!topic) return 'latest topic'
-  return topic.length > 28 ? `${topic.slice(0, 25).trimEnd()}…` : topic
-}
-
-function buildSpeakableAnswerLine(topic: string, category: QuestionCategory): string {
-  switch (category) {
-    case 'location':
-      return `Answer ${topic} as a location first, then add why that location matters in this discussion.`
-    case 'person':
-      return `Answer who ${topic} is first, then the role, context, or reason they matter here.`
-    case 'timing':
-      return `Answer the timing on ${topic} directly first, then state what that timing changes for this discussion.`
-    case 'definition':
-      return `Let me answer ${topic} directly: first what it is, then the practical way to think about it, then why it matters here.`
-    case 'mechanism':
-      return `The clearest way to explain ${topic} is the runtime path: input, core processing, output, and the main trade-off.`
-    case 'comparison':
-      return `The cleanest way to compare ${topic} is on one axis first — quality, cost, speed, or fit — instead of mixing everything together.`
-    case 'reason':
-      return `The useful answer on ${topic} is not a definition — it is why it matters, what changes because of it, and what decision it should drive.`
-    case 'tradeoff':
-      return `The right way to answer ${topic} is to name the main trade-off clearly, then say which side matters more in this context.`
-    case 'implementation':
-      return `I would answer ${topic} in sequence: what happens first, where the real bottleneck is, and what has to be true for it to work smoothly.`
-    default:
-      return `Let me answer ${topic} directly, then make it concrete with the one implication that matters most here.`
-  }
-}
-
-function isSellerishSalesContext(ctx: MeetingContext): boolean {
-  return ctx.meetingType === 'Sales Call' && /\b(seller|account executive|sales manager)\b/i.test(ctx.userRole || '')
-}
-
-function inferSalesWorkflows(chunks: TranscriptChunk[]): string[] {
-  const text = chunks.map((chunk) => chunk.text).join(' ').toLowerCase()
-  const workflows: string[] = []
-
-  if (/\bdeal sourc|outbound|calling\b/.test(text)) workflows.push('outbound calling and deal sourcing')
-  if (/\bfollow[- ]?up\b/.test(text)) workflows.push('follow-up conversations')
-  if (/\bqualif(y|ication)\b/.test(text)) workflows.push('lead qualification')
-  if (/\bappointment|book meetings?\b/.test(text)) workflows.push('meeting booking')
-  if (/\binbound|support\b/.test(text)) workflows.push('inbound support')
-
-  return Array.from(new Set(workflows)).slice(0, 3)
-}
-
-function buildQuestionTitle(topic: string, category: QuestionCategory): string {
-  switch (category) {
-    case 'location':
-      return `Locate ${compactTopic(topic)} clearly`
-    case 'person':
-      return `Explain who ${compactTopic(topic)} is`
-    case 'timing':
-      return `Clarify ${compactTopic(topic)} timing`
-    case 'definition':
-      return `Define ${compactTopic(topic)} clearly`
-    case 'mechanism':
-      return `Explain how ${compactTopic(topic)} works`
-    case 'comparison':
-      return `Compare ${compactTopic(topic)} on one axis`
-    case 'reason':
-      return `Explain why ${compactTopic(topic)} matters`
-    case 'tradeoff':
-      return `Name ${compactTopic(topic)}'s main tradeoff`
-    case 'implementation':
-      return `Walk through ${compactTopic(topic)} rollout`
-    default:
-      return `Answer on ${compactTopic(topic)}`
-  }
-}
-
-function buildSharpeningQuestion(topic: string, category: QuestionCategory): string {
-  switch (category) {
-    case 'location':
-      return `Do you want the direct location of ${topic}, or why that location matters in this context?`
-    case 'person':
-      return `Do you want who ${topic} is, or why they matter to the decision here?`
-    case 'timing':
-      return `Do you want the date or timing on ${topic}, or the practical impact of that timing here?`
-    case 'definition':
-      return `Do you want the plain-English definition of ${topic}, or how it works in practice?`
-    case 'mechanism':
-      return `Do you want the conceptual picture of ${topic}, or the detailed step-by-step path?`
-    case 'comparison':
-      return `Which matters most for ${topic} here — quality, cost, speed, or fit?`
-    case 'reason':
-      return `What decision are we trying to make with ${topic} — understanding it, evaluating it, or choosing around it?`
-    case 'tradeoff':
-      return `Which side of the ${topic} trade-off matters more here — flexibility, speed, cost, or reliability?`
-    case 'implementation':
-      return `What constraint matters most for ${topic} right now — time, complexity, ownership, or risk?`
-    default:
-      return `What is the one thing you most want to understand about ${topic}?`
-  }
-}
 
 // Meeting-type-specific personas with a single inline few-shot example showing the quality bar
 const MEETING_PERSONAS: Record<string, string> = {
@@ -189,9 +36,11 @@ Quality example — BEHAVIORAL question:
 [JUST SAID] "Also, are you comfortable working across product, engineering, and support when things get busy?"
 → [{"type":"answer","title":"Answer the incomplete-information question first","detail":"The first question is the higher-signal behavioral ask. Lead with: 'We had three days to launch and the usage data was split — I polled two stakeholders, picked the option we could walk back, and shipped. [Your real outcome].' Three sentences: situation, the gap, how you decided anyway. The interviewer is listening for agency and a decision heuristic, not caution.","say":"We had [your situation] — I polled two stakeholders, picked the option we could walk back, and shipped. Here's what happened: [your real outcome]."},{"type":"answer","title":"Confirm cross-functional comfort with a story","detail":"Don't just say yes — demonstrate it: 'Yes — in my last role I ran the weekly incident call with eng, support, and PM during [your real crunch]. My job was to translate priorities, not just relay them.' One concrete cross-functional moment beats any claim about being a team player.","say":"Yes — at [your company] I ran the weekly sync across eng, support, and PM during [crunch period]. My job was translating priorities, not just relaying them."},{"type":"question","title":"Ask how decisions get made under shifting priorities","detail":"After answering, probe: 'What's the team's default when you're 60% confident but the deadline is today?' A great answer reveals the operating model. A vague answer signals decision norms aren't discussable — a red flag on a fast-moving team.","say":"Quick question for me — what's the team's default when you're 60% confident but the deadline is today?"}]
 
-Quality example — TECHNICAL question:
-[JUST SAID] "How do voice AI agents work in production, and how do you scale them to millions of users?"
-→ [{"type":"answer","title":"Explain the voice AI pipeline end-to-end","detail":"Cover: (1) ASR — speech-to-text via Whisper or a streaming ASR model, (2) NLU/LLM — intent extraction and response generation, (3) TTS — text-to-speech synthesis streamed back. The key production insight is streaming: you pipe ASR output to the LLM as it arrives, and start TTS on the first sentence — so the user hears a response in ~300ms end-to-end instead of waiting for the full generation.","say":"The pipeline is ASR → LLM → TTS, but the production trick is streaming all three in parallel — ASR feeds the LLM as words arrive, TTS starts on the first sentence, so latency is under 300–500ms end-to-end rather than waiting for the full response."},{"type":"talking_point","title":"Address hallucination prevention proactively","detail":"Before they ask: RAG (retrieval-augmented generation) grounds the LLM in real knowledge, confidence scoring detects low-certainty outputs so the agent says 'I'm not sure' instead of guessing, and human-in-the-loop routing handles edge cases. Mention one real tradeoff: RAG adds latency, so you cache embeddings and pre-fetch likely queries.","say":"To prevent hallucination we use RAG to ground answers in real data, add a confidence threshold so the agent says 'I need to check on that' instead of guessing, and route low-confidence turns to a human or a safer fallback response."},{"type":"question","title":"Clarify their scale and latency SLA","detail":"'When you say millions — is that concurrent or daily active? And what's your latency target?' This shows systems thinking and anchors the architecture discussion. A strong answer names a real constraint (e.g. 200ms target, 50k concurrent). A vague answer means the problem is still exploratory — ask what their current pain point is.","say":"When you say millions — is that concurrent users or daily active? And what latency target are you designing for?"}]`,
+For TECHNICAL questions (any domain — systems, algorithms, architecture, language-specific, etc.):
+→ suggestion #1 must be type="answer" — lead with the key components or steps to cover, then a verbatim speakable opener line the candidate can use immediately. Do NOT say "great question". Start with the answer structure.
+→ suggestion #2 can be a talking_point that proactively addresses a likely follow-up (e.g. tradeoff, failure mode, production gotcha).
+→ suggestion #3 should be type="question" — a clarifying question the candidate can ask back to show systems-design thinking (e.g. scale, constraints, tradeoffs, latency targets).
+Apply this pattern to whatever technical topic was actually asked — Kafka, Redis, load balancing, consistent hashing, ML pipelines, OpenCV, language runtimes, anything. Never hardcode a specific domain in the persona.`,
 
   'Investor Pitch': `You are a General Partner at a Tier-1 VC who has evaluated 3,000+ pitches and led 40 investments. You spot instantly whether founders truly understand their market, unit economics, and path to defensibility.
 
@@ -226,6 +75,11 @@ const DEFAULT_PERSONA = `You are a world-class real-time meeting strategist embe
 
 const STRICT_PREFIX = 'Output ONLY a valid JSON array. No markdown, no explanation, no preamble.\n\n'
 const GENERIC_TITLE_PATTERN = /^(what are the key next steps|next steps|follow up|clarify|ask a question|helpful suggestion)$/i
+const PLACEHOLDER_PATTERN = /\[[A-Za-z][^[\]]*\]|latest topic|current topic|your specific takeaway|next step\]|what matters most is(?:…|\.{3}|$)|the key point here is(?:…|\.{3}|$)|here'?s the direct answer(?:\s+on\s+[^:]+)?:?\s*(?:what matters most is)?(?:…|\.{3}|$)/i
+const SELLERISH_ROLE_PATTERN = /\b(seller|account executive|sales manager)\b/i
+const DELIVERY_PATTERN = /\b(deliver|delivery|ship|shipping|arrival|arrive|lead time|timeline|when can)\b/i
+const QUANTITY_PATTERN = /\b(how many|quantity|quantities|units?|seats?|licenses?|order about|order size)\b/i
+const CUSTOMIZATION_PATTERN = /\b(customi[sz]|configuration|software|boot time|image|engrave|engraved|color|colour|space gray|space grey)\b/i
 const SEMANTIC_STOPWORDS = new Set([
   'the', 'and', 'that', 'this', 'with', 'from', 'your', 'their', 'they', 'them', 'about', 'into',
   'what', 'when', 'where', 'which', 'would', 'could', 'should', 'will', 'just', 'really', 'very',
@@ -248,6 +102,47 @@ function buildSystemPersona(meetingType: string): string {
 function normalizeType(raw: string): Suggestion['type'] {
   const normalized = raw.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z_]/g, '')
   return VALID_TYPES.has(normalized) ? (normalized as Suggestion['type']) : 'question'
+}
+
+function isSellerishSalesContext(ctx: MeetingContext): boolean {
+  return ctx.meetingType === 'Sales Call' && SELLERISH_ROLE_PATTERN.test(ctx.userRole || '')
+}
+
+function compactTopic(topic?: string | null): string {
+  if (!topic) return 'this topic'
+  return topic.length > 28 ? `${topic.slice(0, 25).trimEnd()}…` : topic
+}
+
+function inferSalesQuestionKind(questionText: string): 'delivery' | 'quantity' | 'customization' | 'general' {
+  if (DELIVERY_PATTERN.test(questionText)) return 'delivery'
+  if (QUANTITY_PATTERN.test(questionText)) return 'quantity'
+  if (CUSTOMIZATION_PATTERN.test(questionText)) return 'customization'
+  return 'general'
+}
+
+function buildKnowledgeSay(topic: string, category: ReturnType<typeof inferQuestionCategory>): string {
+  switch (category) {
+    case 'definition':
+      return `${topic} should be answered by saying what it is first, then why it matters in practice.`
+    case 'mechanism':
+      return `The clearest answer on ${topic} is the path from input to output, plus the main trade-off.`
+    case 'comparison':
+      return `The cleanest answer on ${topic} is to compare it on one axis first — quality, cost, speed, or fit.`
+    case 'reason':
+      return `The useful answer on ${topic} is why it matters, what changes because of it, and what decision it should influence.`
+    case 'tradeoff':
+      return `The right answer on ${topic} is the main trade-off, then which side matters more here.`
+    case 'implementation':
+      return `The right answer on ${topic} is what happens first, where the friction appears, and what must be true for rollout to work.`
+    case 'location':
+      return `The direct answer on ${topic} is the location first, then why that location matters here.`
+    case 'person':
+      return `The direct answer on ${topic} is who the person is, then why they matter here.`
+    case 'timing':
+      return `The direct answer on ${topic} is the timing itself, then what that timing changes.`
+    default:
+      return `The direct answer on ${topic} should come first, then the one implication that matters here.`
+  }
 }
 
 function buildTranscriptLines(chunks: TranscriptChunk[]): string {
@@ -467,9 +362,11 @@ function sanitizeSuggestions(
   for (const suggestion of suggestions) {
     const title = suggestion.title.replace(/\s+/g, ' ').trim()
     const detail = suggestion.detail.replace(/\s+/g, ' ').trim()
+    const say = suggestion.say?.replace(/\s+/g, ' ').trim()
     if (!title || !detail) continue
     if (title.length < 6 || detail.length < 30) continue
     if (GENERIC_TITLE_PATTERN.test(title)) continue
+    if (PLACEHOLDER_PATTERN.test(`${title} ${detail} ${say ?? ''}`)) continue
 
     const key = title.toLowerCase()
     if (seenTitles.has(key)) continue
@@ -483,6 +380,7 @@ function sanitizeSuggestions(
       ...suggestion,
       title,
       detail,
+      say: say && !PLACEHOLDER_PATTERN.test(say) ? say : undefined,
     })
   }
 
@@ -598,346 +496,214 @@ export function buildFallbackSuggestions(
   meetingContext: MeetingContext = { meetingType: '', userRole: '', goal: '', prepNotes: '' },
   meetingState?: MeetingState
 ): Suggestion[] {
+  // Thin transcript: not enough signal to be specific
+  if (recentChunks.length < 2) {
+    return [
+      { id: generateId(), type: 'question', title: 'Set the goal for this conversation', detail: 'Ask what outcome needs to happen before this meeting ends — a decision, a next step, or a specific question answered.', say: 'What outcome do we need to land on before this meeting ends?', whyNow: 'Too little transcript yet to give a specific suggestion.', listenFor: 'A concrete decision or deliverable, not just agreement to continue.' },
+      { id: generateId(), type: 'question', title: 'Who makes the final call?', detail: 'Surface the decision-maker early. Knowing who can say yes — and what they need — saves time for everyone else.', say: 'Who is the final decision-maker here, and what do they need to see before they can say yes?', whyNow: 'Naming the decision-maker early prevents work that goes nowhere.', listenFor: 'A named person and a specific approval criterion.' },
+      { id: generateId(), type: 'question', title: 'What does success look like?', detail: 'Anchor the conversation in a concrete outcome before it drifts. One shared definition of success keeps everyone aligned.', say: 'What would make this meeting a success — a decision made, a next step assigned, or a specific question answered?', whyNow: 'No clear outcome framed yet.', listenFor: 'A concrete deliverable instead of vague agreement.' },
+    ]
+  }
+
   const signals = extractConversationSignals(recentChunks)
-  const topicLabels = extractTopicLabels(recentChunks)
   const latest = recentChunks[recentChunks.length - 1]
   const fallbacks: Suggestion[] = []
   const actionableQuestion = selectActionableQuestion(recentChunks, meetingContext)
+  const currentQuestion = actionableQuestion?.text ?? meetingState?.currentQuestion ?? null
+  const questionIntent = currentQuestion
+    ? (meetingState?.questionIntent ?? inferQuestionIntent(currentQuestion, meetingContext))
+    : null
+  const questionCategory = currentQuestion ? inferQuestionCategory(currentQuestion) : null
+  const primaryTopic = extractPrimaryTopic(recentChunks, `${currentQuestion ?? ''} ${meetingContext.goal ?? ''}`) ?? null
 
-  const rawPrimary = extractPrimaryTopic(recentChunks, `${actionableQuestion?.text ?? ''} ${meetingContext.goal ?? ''}`) || topicLabels[0] || signals.topics[0] || ''
-  const primaryTopic = rawPrimary.length >= 4 ? rawPrimary : 'latest topic'
-  const comparisonSet = topicLabels.slice(0, 4)
-  const comparisonText = comparisonSet.length > 1 ? comparisonSet.join(', ') : primaryTopic
+  if (currentQuestion && questionIntent === 'product_knowledge' && isSellerishSalesContext(meetingContext)) {
+    const questionKind = inferSalesQuestionKind(currentQuestion)
 
-  if (actionableQuestion) {
-    const question = actionableQuestion
-    const hasShortlist = comparisonSet.length >= 2
-    const category = inferQuestionCategory(question.text)
-    const questionIntent = meetingState?.questionIntent ?? inferQuestionIntent(question.text, meetingContext)
-
-    const rawText = [question.text, ...recentChunks.map((c) => c.text)].join(' ')
-    const sellerishSales = isSellerishSalesContext(meetingContext)
-    const productKnowledge = questionIntent === 'product_knowledge'
-
-    if (productKnowledge) {
-      const workflows = inferSalesWorkflows(recentChunks)
-      const workflowSummary = workflows[0] ?? 'the first workflow or use case'
-      const workflowList = workflows.length > 1 ? workflows.join(', ') : workflowSummary
-      const productAngle = sellerishSales
-        ? `Treat "${question.text}" as a product-fit question, not a meeting tactic or systems deep-dive.`
-        : `Treat "${question.text}" as a product/category question that needs a plain-English answer first.`
-
-      fallbacks.push({
-        id: generateId(),
-        type: 'answer',
-        title: `Define the ${compactTopic(primaryTopic)} clearly`,
-        detail: `They asked: "${question.text}" [${question.timestamp}]. ${productAngle} Answer in three beats: what ${primaryTopic} is, which workflow or use case it serves${workflows.length > 0 ? ` — ${workflowList}` : ''}, and the practical differentiator or trade-off.`,
-        say: sellerishSales
-          ? `At a high level, ${primaryTopic} is best understood by the workflow it handles, the team it helps, and the outcome it improves — the first thing to pin down is which use case matters most for you.`
-          : `The cleanest way to answer ${primaryTopic} is the job it does, where it fits in the workflow, and the trade-off that matters most in practice.`,
-        whyNow: 'This is a direct product question, so the answer should define the category and use case before probing further.',
-        listenFor: 'The workflow, team, or outcome they care about first — that tells you which product angle matters.',
-      })
-
-      fallbacks.push({
-        id: generateId(),
-        type: 'question',
-        title: workflows.length > 0 ? 'Pick the first workflow' : 'Pick the first use case',
-        detail: workflows.length > 0
-          ? `Do not keep the conversation at the category level. Ask which workflow matters most first — ${workflowList} — so the answer lands on a concrete use case instead of a broad product label.`
-          : `Do not stay at the category level. Ask which use case or buyer outcome matters first so the answer becomes concrete instead of generic.`,
-        say: workflows.length > 0
-          ? `Which workflow matters most for you first — ${workflowList}? That will tell me which version of this answer is actually relevant.`
-          : `Which use case matters most for you first? That will tell me which part of ${primaryTopic} is actually relevant.`,
-        whyNow: 'One concrete use case is easier to evaluate than a broad product label.',
-        listenFor: 'A specific workflow, team, or pain point instead of general curiosity.',
-      })
-
-      fallbacks.push({
-        id: generateId(),
-        type: 'talking_point',
-        title: sellerishSales ? 'Anchor on the buyer outcome' : `Name the ${compactTopic(primaryTopic)} tradeoff`,
-        detail: sellerishSales
-          ? `Translate the category into business value: name the workflow outcome, the operator or team it helps, and the reason it is better than staying manual or fragmented. Tie the explanation to a buyer outcome instead of listing features.`
-          : `Move beyond description to the practical trade-off. The useful thing to say about ${primaryTopic} is what it makes easier, harder, faster, slower, cheaper, or riskier in actual use.`,
-        say: sellerishSales
-          ? `The useful way to evaluate ${primaryTopic} is not as a buzzword — it is which workflow improves first, for which team, and what business outcome changes because of it.`
-          : `The key thing to say about ${primaryTopic} is not just what it is — it is which trade-off matters most when you actually use it.`,
-        whyNow: 'That turns a broad product question into a usable evaluation frame.',
-        listenFor: 'Whether they respond to workflow fit, buyer outcome, cost, or a specific operational trade-off.',
-      })
-
-      return sanitizeSuggestions(fallbacks)
-    }
-
-    if (questionIntent === 'technical_knowledge' || isTechnicalQuestion(rawText, meetingContext)) {
-      const topic = primaryTopic || 'the system'
-      const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${rawText}`)
-
-      if (llmLike) {
-        fallbacks.push({
-          id: generateId(),
-          type: 'answer',
-          title: 'Explain how an LLM works',
-          detail: `They asked: "${question.text}" [${question.timestamp}]. Walk through the runtime path in order: text is tokenized, tokens become embeddings, transformer attention layers build context across the sequence, and the model predicts the next token repeatedly until it forms the answer.`,
-          say: `An LLM first tokenizes the input, maps those tokens to embeddings, runs transformer attention layers to build context, and then predicts the next token repeatedly until the response is complete.`,
-          whyNow: 'This is a direct technical question, so a concrete runtime explanation is more useful than a generic framework.',
-          listenFor: 'Whether they want the training story next, or a deeper dive on embeddings, attention, or decoding.',
-        })
-
-        fallbacks.push({
-          id: generateId(),
-          type: 'talking_point',
-          title: 'Separate tokens from embeddings',
-          detail: `Tokenization and embeddings are not the same step. Tokenization breaks text into units the model can process; embeddings turn each token into a vector so attention layers can compare meaning and context across the sequence.`,
-          say: `Tokenization chops the text into model-sized pieces, and embeddings turn those pieces into vectors the transformer can reason over — that separation is the key thing to explain clearly.`,
-          whyNow: 'People often blur these two steps together, which makes the explanation feel fuzzy fast.',
-          listenFor: 'Whether they are asking about the runtime path, or they actually want training internals and representation learning.',
-        })
-
-        fallbacks.push({
-          id: generateId(),
-          type: 'question',
-          title: 'Clarify training vs inference',
-          detail: `Ask whether they want the training story or the runtime inference path. Training is large-scale next-token prediction over huge corpora; inference is the live loop that predicts one token at a time using the trained weights.`,
-          say: `Do you want the training story, or the runtime inference path from prompt to generated answer? That changes the explanation a lot.`,
-          whyNow: 'That one split keeps the answer sharp instead of mixing two different layers of the system.',
-          listenFor: 'Whether they care more about model learning, or about how a prompt becomes a live answer.',
-        })
-
-        return sanitizeSuggestions(fallbacks)
-      }
-
-      fallbacks.push({
-        id: generateId(),
-        type: 'answer',
-        title: `Explain ${compactTopic(topic)} architecture`,
-        detail: `They asked: "${question.text}" [${question.timestamp}]. Walk through in order: (1) the input path, (2) the core processing loop, (3) the output path, and (4) the main production bottleneck that shapes the design.`,
-        say: `I'd explain ${topic} in four parts: input, core processing, output, and the main production bottleneck that drives the real trade-offs.`,
-        whyNow: 'A direct technical question just landed — architecture first, trade-offs second, proof third.',
-        listenFor: 'Whether they want depth on a specific component, the trade-offs, or your hands-on experience.',
-      })
-
-      fallbacks.push({
-        id: generateId(),
-        type: 'talking_point',
-        title: `Name ${compactTopic(topic)}'s production bottleneck`,
-        detail: `Every system has one dominant production challenge. For ${topic} it could be latency, consistency, throughput, accuracy, or operational complexity — naming it precisely separates a credible answer from a textbook one.`,
-        say: `The main production challenge with ${topic} is [specific bottleneck] — here's how we addressed it: [your real example and outcome].`,
-        whyNow: 'Production specifics separate hands-on experience from surface-level knowledge.',
-        listenFor: 'Whether they push back on the bottleneck you named — that reveals their own depth with the system.',
-      })
-
-      fallbacks.push({
-        id: generateId(),
-        type: 'question',
-        title: `Clarify ${compactTopic(topic)} scale and constraints`,
-        detail: `Architecture decisions for ${topic} change significantly at different scales — what works at 100 users can break at 1M, and latency vs. consistency trade-offs depend entirely on the use case.`,
-        say: `What scale and constraints are you targeting with ${topic} — latency budget, consistency requirements, throughput? Those shape the whole design.`,
-        whyNow: 'Scale and constraints determine the architecture — clarifying them focuses the technical discussion.',
-        listenFor: 'Concrete numbers and requirements that let you tailor the technical depth to what actually matters.',
-      })
-
-      return sanitizeSuggestions(fallbacks)
-    }
-
-    fallbacks.push({
-      id: generateId(),
-      type: 'answer',
-      title: buildQuestionTitle(primaryTopic, category),
-      detail: hasShortlist
-        ? `They explicitly asked: "${question.text}" [${question.timestamp}]. Answer by anchoring on ${primaryTopic} and comparing it directly against ${comparisonText} — pick one axis (quality, cost, workflow fit) and stick with it.`
-        : `They explicitly asked: "${question.text}" [${question.timestamp}]. Answer directly on ${primaryTopic}: give the answer first, structure it clearly, and tie it back to what this conversation is actually trying to decide.`,
-      say: hasShortlist
-        ? `Let me anchor on ${primaryTopic}: compared with ${comparisonSet.slice(1, 3).join(' and ')}, the key difference is — [your specific point].`
-        : buildSpeakableAnswerLine(primaryTopic, category),
-      whyNow: 'A direct question just landed — a focused, specific answer beats a broad overview every time.',
-      listenFor: 'A concrete follow-up criterion (quality, cost, fit) that tells you which angle they actually care about.',
-    })
-
-    if (hasShortlist) {
-      fallbacks.push({
-        id: generateId(),
-        type: 'question',
-        title: 'Choose the comparison axis',
-        detail: `The transcript names ${comparisonText}. Ask which single dimension they care about most so you compare on one axis instead of giving a wandering overview.`,
-        say: `Which matters most here — quality, cost, workflow fit, or how ${primaryTopic} integrates into your existing stack?`,
-        whyNow: 'That one question turns a generic overview into a targeted recommendation.',
-        listenFor: 'A concrete criterion instead of more names or general exploration.',
-      })
-
-      fallbacks.push({
-        id: generateId(),
-        type: 'talking_point',
-        title: `Compare ${compactTopic(primaryTopic)} against the shortlist`,
-        detail: `You already named ${comparisonText}${latest ? ` by [${latest.timestamp}]` : ''}. Compare ${primaryTopic} directly against that list on one axis — don't restart from definitions.`,
-        say: `Since we've already named ${comparisonText}, let me compare ${primaryTopic} directly against that shortlist on [quality / cost / fit].`,
-        whyNow: 'The conversation has enough named options for a direct comparison — no need to re-introduce.',
-        listenFor: 'Whether they want a recommendation, a technical comparison, or a workflow fit.',
-      })
-    } else {
-      fallbacks.push({
-        id: generateId(),
-        type: 'question',
-        title: `Anchor the evaluation criteria`,
-        detail: `The question about ${primaryTopic} needs a lens. Ask what they're optimizing for — one answer turns an overview into a targeted recommendation.`,
-        say: buildSharpeningQuestion(primaryTopic, category),
-        whyNow: 'A concrete criterion shapes the answer and prevents a wandering overview.',
-        listenFor: 'A specific use case or constraint that lets you give a direct recommendation.',
-      })
-
-      fallbacks.push({
-        id: generateId(),
-        type: 'talking_point',
-        title: `Name the key tradeoff on ${compactTopic(primaryTopic)}`,
-        detail: `Move beyond description to the real tradeoff. The most useful thing you can say about ${primaryTopic} is what becomes easier, harder, faster, slower, cheaper, or riskier — that is what actually drives decisions.`,
-        say: `The key tradeoff on ${primaryTopic} is not whether it is good or bad — it is which cost, risk, or constraint matters most in this situation.`,
-        whyNow: 'Naming the tradeoff forces specificity and usually gets a faster, more useful reply than a general pitch.',
-        listenFor: 'Which side of the tradeoff they land on — that shapes the rest of the recommendation.',
-      })
-    }
-
-    return sanitizeSuggestions(fallbacks)
-  }
-
-  if (signals.risks[0]) {
-    fallbacks.push({
-      id: generateId(),
-      type: 'clarification',
-      title: 'Clarify the risky assumption',
-      detail: `There is unresolved ambiguity in: "${signals.risks[0].text}" [${signals.risks[0].timestamp}]. Define the owner, timeline, or decision criterion now so this does not stay vague.`,
-      say: 'Can we pin down the owner, timeline, and decision rule on this before we move on?',
-      whyNow: 'The room is carrying ambiguity that will create downstream confusion.',
-      listenFor: 'A named owner and a concrete deadline instead of vague agreement.',
-    })
-  }
-
-  if (signals.numericClaims[0]) {
-    fallbacks.push({
-      id: generateId(),
-      type: 'fact_check',
-      title: 'Pressure-test the number',
-      detail: `A concrete number or claim was stated: "${signals.numericClaims[0].text}" [${signals.numericClaims[0].timestamp}]. Ask for the source, assumption, or comparison point before everyone starts treating it as fact.`,
-      say: 'What assumption or source is that number based on?',
-      whyNow: 'Once a number lands, the room will start planning around it unless it is tested.',
-      listenFor: 'A real source, baseline, or a sign the claim is softer than it sounds.',
-    })
-  }
-
-  if (signals.commitments[0]) {
-    fallbacks.push({
-      id: generateId(),
-      type: 'question',
-      title: 'Lock the next step',
-      detail: `A commitment surfaced in: "${signals.commitments[0].text}" [${signals.commitments[0].timestamp}]. Confirm the owner, exact deliverable, and timing so the meeting ends with a real next step.`,
-      say: 'Before we wrap, who owns that exactly and by when?',
-      whyNow: 'A soft commitment becomes real only when owner and timing are explicit.',
-      listenFor: 'A named owner, a deliverable, and an actual date.',
-    })
-  }
-
-  if (fallbacks.length === 0) {
-    const rawTextAll = recentChunks.map((c) => c.text).join(' ')
-    const TECHNICAL_RE_BROAD = /how (does|do|can|to)|architect|pipeline|scale|real.?time|latency|hallucin|production|inference|accuracy|model|deploy|securi|implement|design\b/i
-
-    if (TECHNICAL_RE_BROAD.test(rawTextAll)) {
-      const topic = primaryTopic || 'the system'
-      const llmLike = /\b(llm|large language model|tokenization|tokenisation|embedding|embeddings|attention|transformer)\b/i.test(`${topic} ${rawTextAll}`)
-
-      if (llmLike) {
-        fallbacks.push(
-          {
-            id: generateId(),
-            type: 'answer',
-            title: 'Explain how an LLM works',
-            detail: `Walk through the runtime path clearly: tokenization, embeddings, transformer attention, then next-token decoding. That sequence answers most "how does an LLM work?" questions much better than abstract AI language.`,
-            say: `An LLM tokenizes the input, converts tokens into embeddings, runs attention across the sequence to build context, and then predicts the next token repeatedly until it completes the answer.`,
-            whyNow: 'This is a technical explainer moment, so the concrete runtime path is the highest-value move.',
-            listenFor: 'Whether they want to go deeper on embeddings, attention, or the training loop next.',
-          },
-          {
-            id: generateId(),
-            type: 'talking_point',
-            title: 'Separate tokenization from meaning',
-            detail: `Make the distinction explicit: tokenization is text segmentation, embeddings are learned numerical representations, and attention is what mixes context across the sequence. That clears up where the model's "sense of the task" actually comes from.`,
-            say: `The model doesn't understand first and answer later — context emerges because attention layers keep updating the token representations as the sequence is processed.`,
-            whyNow: 'That distinction is where most fuzzy explanations go wrong.',
-            listenFor: 'Whether they are actually confused about embeddings, or about the transformer inference loop more broadly.',
-          },
-          {
-            id: generateId(),
-            type: 'question',
-            title: 'Clarify training vs inference',
-            detail: `Ask whether they want the offline training process or the live inference path. Those are related but different explanations, and mixing them is what usually makes the answer muddy.`,
-            say: `Do you want the training explanation, or the inference path from prompt to generated answer?`,
-            whyNow: 'That keeps the explanation clean instead of blending two different system layers.',
-            listenFor: 'Which part of the stack they actually care about next.',
-          }
-        )
-        return sanitizeSuggestions(fallbacks)
-      }
-
+    if (questionKind === 'delivery') {
       fallbacks.push(
         {
           id: generateId(),
           type: 'answer',
-          title: `Explain ${compactTopic(topic)} architecture`,
-          detail: `Walk through in order: the input path, the core processing loop, the output path, and the main production bottleneck. Architecture first, trade-offs second, proof third.`,
-          say: `I'd explain ${topic} as input, core processing, output, and the main bottleneck that changes the design trade-offs.`,
-          whyNow: 'There is a technical question in the conversation — the architecture framework is the right opening move.',
-          listenFor: 'Whether they want depth on a specific component, the trade-offs, or your hands-on experience.',
+          title: 'Answer the delivery timing',
+          detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Answer with the delivery window, what it depends on (stock or configuration), and the next step to confirm the order.`,
+          say: 'The clean answer is the delivery window, any dependency on stock or configuration, and what we need to confirm today to lock the order.',
+          whyNow: 'The buyer moved from exploration into a concrete purchasing question.',
+          listenFor: 'Whether standard stock works, or whether configuration choices will change timing.',
+        },
+        {
+          id: generateId(),
+          type: 'clarification',
+          title: 'Confirm the order details',
+          detail: 'Before promising timing, pin down the exact quantity, standard versus custom units, and any non-default requirements that could change fulfillment.',
+          say: 'Before I commit to timing, let me confirm quantity, standard versus custom units, and whether you need any non-default setup.',
+          whyNow: 'Delivery answers are only credible if the fulfillment assumptions are explicit.',
+          listenFor: 'Anything custom that changes lead time or fulfillment complexity.',
         },
         {
           id: generateId(),
           type: 'talking_point',
-          title: `Name ${compactTopic(topic)}'s production bottleneck`,
-          detail: `Every system has one dominant production challenge. For ${topic} it could be latency, consistency, throughput, accuracy, or operational complexity — naming it precisely separates a credible answer from a textbook one.`,
-          say: `The main production challenge with ${topic} is [specific bottleneck] — here's how we addressed it: [your real example and outcome].`,
-          whyNow: 'Production specifics show real hands-on experience.',
-          listenFor: 'Whether they challenge the bottleneck you named — that reveals their actual system depth.',
-        },
-        {
-          id: generateId(),
-          type: 'question',
-          title: `Clarify ${compactTopic(topic)} scale and constraints`,
-          detail: `Architecture decisions for ${topic} change significantly at different scales — what works at 100 users can break at 1M, and latency vs. consistency trade-offs depend entirely on the use case.`,
-          say: `What scale and constraints are you targeting with ${topic} — latency budget, consistency requirements, throughput? Those shape the whole design.`,
-          whyNow: 'Scale and constraints determine the architecture — knowing them prevents wasted explanation.',
-          listenFor: 'Concrete numbers and requirements that let you tailor the technical depth.',
+          title: 'Separate stock from customization',
+          detail: 'Frame the decision clearly: standard units can move faster, while custom images, software, engraving, or special configurations can add coordination.',
+          say: 'The main trade-off here is simple: standard units move faster, while custom setup can change the delivery plan.',
+          whyNow: 'That keeps the answer honest without sounding evasive.',
+          listenFor: 'Whether speed matters more than custom setup for this order.',
         }
       )
       return sanitizeSuggestions(fallbacks)
     }
 
-    const topic = signals.topics.slice(0, 2).join(' / ') || primaryTopic || 'current topic'
+    if (questionKind === 'quantity') {
+      fallbacks.push(
+        {
+          id: generateId(),
+          type: 'answer',
+          title: 'Confirm the order size',
+          detail: `They asked or answered a quantity question: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Turn it into a concrete order-sizing answer: quantity, any configuration split, and what that means for next steps.`,
+          say: 'The next answer should confirm the order size, whether every unit needs the same configuration, and what we need to finalize the purchase.',
+          whyNow: 'The conversation is moving into real order planning, not general product positioning.',
+          listenFor: 'Whether all units are identical or whether different teams need different specs.',
+        },
+        {
+          id: generateId(),
+          type: 'question',
+          title: 'Check for config splits',
+          detail: 'Ask whether the whole team needs the same setup or whether power users need a different configuration. That changes both pricing and fulfillment.',
+          say: 'Will all units have the same setup, or do you expect a split between standard users and heavier workloads?',
+          whyNow: 'A single sizing answer can hide a real configuration split.',
+          listenFor: 'Whether one SKU works or the order needs segmentation.',
+        },
+        {
+          id: generateId(),
+          type: 'talking_point',
+          title: 'Tie quantity to workflow fit',
+          detail: 'Anchor the order size back to actual usage patterns instead of broad enthusiasm. That keeps the order credible and helps right-size the recommendation.',
+          say: 'The useful way to size this is by matching the device configuration to the actual workload mix across the team.',
+          whyNow: 'Quantity without workload fit can lead to overbuying or under-speccing.',
+          listenFor: 'Whether local LLM and GPU-heavy work applies to everyone or only a subset.',
+        }
+      )
+      return sanitizeSuggestions(fallbacks)
+    }
+
+    if (questionKind === 'customization') {
+      fallbacks.push(
+        {
+          id: generateId(),
+          type: 'answer',
+          title: 'Lock the customizations',
+          detail: `They asked about setup details: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Answer by separating standard order details from optional custom image, software, engraving, or color choices.`,
+          say: 'The clean answer is whether you want a standard order or any custom setup such as software image, engraving, or non-default configuration before we finalize the order.',
+          whyNow: 'Customization changes both fulfillment and delivery expectations.',
+          listenFor: 'Any requirement beyond a standard order that needs to be captured now.',
+        },
+        {
+          id: generateId(),
+          type: 'question',
+          title: 'Confirm standard vs custom',
+          detail: 'Ask whether they want a standard company order or any special setup. That prevents vague “maybe later” custom requirements from surfacing after the quote.',
+          say: 'Should I treat this as a standard order, or do you need any custom image, software, engraving, or color choice captured now?',
+          whyNow: 'That single split determines whether this stays simple or needs extra coordination.',
+          listenFor: 'Whether the order can stay standard and move fast.',
+        },
+        {
+          id: generateId(),
+          type: 'talking_point',
+          title: 'Keep standard orders simple',
+          detail: 'If they do not need custom setup, say that clearly and move the conversation toward confirmation and delivery rather than reopening broad discovery.',
+          say: 'If this is a standard order, the fastest path is to confirm quantity, configuration, and delivery expectations now.',
+          whyNow: 'The buyer is already close to operational decisions.',
+          listenFor: 'A clean “standard order” answer you can convert into next steps.',
+        }
+      )
+      return sanitizeSuggestions(fallbacks)
+    }
+
     fallbacks.push(
       {
         id: generateId(),
-        type: 'talking_point',
-        title: `Re-anchor on ${compactTopic(primaryTopic)}`,
-        detail: `The live thread is really about ${topic}. Summarize it in one sharp line and move the room toward a recommendation, comparison, or decision instead of letting it stay as a loose overview.`,
-        say: `The real thread here is ${primaryTopic} — let me narrow this to the one recommendation or comparison that matters most.`,
-        whyNow: 'The conversation has topic signal, but not enough structure yet.',
-        listenFor: 'Whether they want a recommendation, a comparison, or a deeper technical breakdown.',
+        type: 'answer',
+        title: `Define ${compactTopic(primaryTopic)} clearly`,
+        detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Answer with the job this product serves, the team or workflow it fits, and the trade-off that matters most in practice.`,
+        say: `The cleanest answer on ${compactTopic(primaryTopic)} is the job it does, who it is for, and the trade-off that matters in actual use.`,
+        whyNow: 'This is a direct product question, so the answer should define the product in practical terms first.',
+        listenFor: 'Which workflow, team, or buying constraint matters most for them.',
       },
       {
         id: generateId(),
         type: 'question',
-        title: 'Ask for the use case',
-        detail: `The fastest way to make ${primaryTopic} useful is to ask what they are actually optimizing for — evaluation, creator workflow, multilingual coverage, or production use.`,
-        say: `Before I go broader, what use case are we optimizing for with ${primaryTopic}?`,
-        whyNow: 'That turns a generic explainer into a relevant recommendation.',
-        listenFor: 'A concrete use case you can answer against instead of abstract interest.',
+        title: 'Pick the buying constraint',
+        detail: 'Move from broad product language to the real purchase criterion: performance, cost, speed to deploy, or customization.',
+        say: 'Which matters most here — performance, standardization, speed to deploy, or customization?',
+        whyNow: 'One buying constraint makes the answer more useful than a general product pitch.',
+        listenFor: 'The criterion that should shape the rest of the recommendation.',
       },
       {
         id: generateId(),
-        type: 'clarification',
-        title: 'Define the decision rule',
-        detail: `The discussion still needs a sharper decision rule. Ask what outcome, comparison, or next step would make this topic resolved before the meeting moves on${latest ? ` from [${latest.timestamp}]` : ''}.`,
-        say: 'What would make this topic resolved today — a recommendation, a comparison, or a concrete next step?',
-        whyNow: 'Without a decision rule, the room will keep circling.',
-        listenFor: 'A concrete outcome instead of more broad explanation.',
+        type: 'talking_point',
+        title: 'Tie the product to usage',
+        detail: 'Frame the answer around workload fit, team usage, and operational trade-offs instead of broad enthusiasm.',
+        say: 'The useful way to evaluate this product is the workload fit, the users it serves, and the operational trade-off it creates.',
+        whyNow: 'That keeps the answer concrete and buyer-relevant.',
+        listenFor: 'Whether they care most about performance, standardization, or order simplicity.',
       }
+    )
+    return sanitizeSuggestions(fallbacks)
+  }
+
+  if (currentQuestion && questionIntent && questionIntent !== 'meeting_coaching') {
+    const topic = compactTopic(primaryTopic ?? currentQuestion)
+    fallbacks.push(
+      {
+        id: generateId(),
+        type: 'answer',
+        title: `Answer on ${topic}`,
+        detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Answer the question itself first, then add the one implication that matters in this conversation.`,
+        say: buildKnowledgeSay(topic, questionCategory ?? 'general'),
+        whyNow: 'A direct knowledge question is open, so the first card should answer it rather than coach around it.',
+        listenFor: 'Whether they want more depth, a comparison, or the practical implication next.',
+      },
+      {
+        id: generateId(),
+        type: 'talking_point',
+        title: `Name the ${topic} tradeoff`,
+        detail: 'Move beyond definition into the practical trade-off or decision consequence. That is what makes the answer useful in a live conversation.',
+        say: `The key thing to add on ${topic} is the trade-off or decision consequence, not just the definition.`,
+        whyNow: 'A plain answer gets stronger when it includes the practical consequence.',
+        listenFor: 'Which side of the trade-off or implication they care about most.',
+      },
+      {
+        id: generateId(),
+        type: 'question',
+        title: `Clarify ${topic} constraints`,
+        detail: 'Ask one narrow follow-up only if it would materially change the answer — for example scale, version, workflow, or timeline.',
+        say: `What constraint matters most for ${topic} here — scale, version, workflow, or timing?`,
+        whyNow: 'One focused clarifier can make the answer more precise without derailing it.',
+        listenFor: 'The one variable that should shape the deeper answer.',
+      }
+    )
+  }
+
+  if (signals.commitments[0]) {
+    const c = signals.commitments[0]
+    fallbacks.push({ id: generateId(), type: 'question', title: 'Lock the next step', detail: `A commitment surfaced: "${c.text}" [${c.timestamp}]. Confirm owner, deliverable, and timing before moving on.`, say: 'Before we wrap — who owns that exactly, and by when?', whyNow: 'Soft commitments evaporate without a named owner and a real date.', listenFor: 'A named owner and an actual date, not vague agreement.' })
+  }
+
+  if (signals.risks[0]) {
+    const r = signals.risks[0]
+    fallbacks.push({ id: generateId(), type: 'clarification', title: 'Resolve the open risk', detail: `Unresolved ambiguity: "${r.text}" [${r.timestamp}]. Define the owner or decision rule now before it creates downstream problems.`, say: 'Can we pin down the owner and timeline on this before moving on?', whyNow: 'Undefined risks become blockers after the meeting ends.', listenFor: 'A named owner and a concrete deadline.' })
+  }
+
+  if (signals.numericClaims[0]) {
+    const n = signals.numericClaims[0]
+    fallbacks.push({ id: generateId(), type: 'fact_check', title: 'Pressure-test the number', detail: `A number was stated: "${n.text}" [${n.timestamp}]. Ask for the source or assumption before the room plans around it.`, say: 'What assumption or source is that number based on?', whyNow: 'Unchallenged numbers become unexamined baselines.', listenFor: 'A real source or a sign the claim is softer than it sounds.' })
+  }
+
+  // Last resort: 3 universally useful cards
+  if (fallbacks.length === 0) {
+    fallbacks.push(
+      { id: generateId(), type: 'talking_point', title: 'Anchor on the core point', detail: 'Summarize the most important thing in one sharp line and move the room toward a recommendation or decision.', say: 'The key point here is the concrete constraint or decision that should shape the next step.', whyNow: 'The conversation has signal but needs a sharper focus.', listenFor: 'Whether they want a recommendation, comparison, or decision.' },
+      { id: generateId(), type: 'question', title: 'Ask for the use case', detail: 'The fastest path from overview to recommendation is to ask what outcome they are actually optimizing for.', say: 'Before I go broader, what use case or outcome are we optimizing for here?', whyNow: 'One concrete use case makes any answer twice as useful.', listenFor: 'A specific outcome or constraint rather than continued general exploration.' },
+      { id: generateId(), type: 'clarification', title: 'Define the decision rule', detail: `Ask what would make this topic resolved before the conversation moves on${latest ? ` from [${latest.timestamp}]` : ''}.`, say: 'What would make this resolved today — a recommendation, a comparison, or a concrete next step?', whyNow: 'Without a decision rule, the room keeps circling.', listenFor: 'A concrete outcome instead of more broad explanation.' }
     )
   }
 
@@ -959,7 +725,7 @@ export async function generateSuggestionBatch(
     ? [...recentChunks, { id: 'live-preview', text: options.liveTranscriptPreview.trim(), timestamp: 'LIVE' }]
     : recentChunks
   const previousSuggestions = previousBatches.flatMap((batch) => batch.suggestions)
-  const latestQuestionText = extractConversationSignals(promptChunks).questions[0]?.text
+  const latestQuestionText = selectActionableQuestion(promptChunks, meetingContext)?.text
   const systemPersona = buildSystemPersona(meetingContext.meetingType)
   const userContent = buildUserMessage(
     settings,
@@ -1006,34 +772,17 @@ export async function generateSuggestionBatch(
     suggestions.push(fallback)
   }
 
-  // Build context for topic-aware last-resort pads
-  const padSignals = extractConversationSignals(promptChunks)
-  const padTopicLabels = extractTopicLabels(promptChunks)
-  const padTopic = padTopicLabels[0] || padSignals.topics[0] || null
-  const padTopicStr = padTopic ? compactTopic(padTopic) : 'this topic'
-  const padQuestion = padSignals.questions[0]?.text || null
-
-  // Single last-resort pad — 2 real suggestions + 1 contextual pad beats 3 generic ones.
+  // Single last-resort pad — 2 real suggestions + 1 generic pad beats a broken contextual one.
   if (suggestions.length < 3) {
-  const pad: Suggestion = padQuestion
-      ? {
-          id: generateId(),
-          type: 'answer',
-          title: `Answer their ${padTopicStr} question directly`,
-          detail: `An open question is waiting: "${padQuestion.slice(0, 90)}${padQuestion.length > 90 ? '…' : ''}" — answer the fact, mechanism, or comparison directly before adding extra framing.`,
-          say: `The direct answer on ${padTopicStr} is the fact or mechanism itself first — then the one implication that matters here.`,
-          whyNow: 'A direct question is open — a focused answer moves things forward faster than a general explanation.',
-          listenFor: 'Whether the answer resolves their question or surfaces a more specific need.',
-        }
-      : {
-          id: generateId(),
-          type: 'question',
-          title: `Get specific on ${padTopicStr}`,
-          detail: `Move from overview to specifics on ${padTopic || 'the current topic'} — one sharp question unlocks a concrete recommendation instead of continuing broadly.`,
-          say: `What's the most important thing to nail about ${padTopicStr} — quality, speed, cost, or fit for your use case?`,
-          whyNow: 'The conversation needs a sharper focus to produce something actionable.',
-          listenFor: 'A concrete priority or use case rather than continued general exploration.',
-        }
+    const pad: Suggestion = {
+      id: generateId(),
+      type: 'question',
+      title: 'Lock the next step',
+      detail: 'Before the conversation moves on, confirm who owns the next action and by when — that is what turns discussion into momentum.',
+      say: 'Before we move on — who owns the next step here, and by when should it be done?',
+      whyNow: 'Every meeting needs to end with a named owner and a concrete date.',
+      listenFor: 'A specific person and a real deadline, not vague agreement.',
+    }
     if (!isSemanticDuplicate(pad, suggestions) && !previousTitleKeys.has(pad.title.trim().toLowerCase())) {
       suggestions.push(pad)
     }
