@@ -1,6 +1,6 @@
 'use client'
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { Send } from 'lucide-react'
+import { Send, Trash2 } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import { streamChatResponse, streamDetailedAnswer } from '@/lib/chat'
 import { generateId, formatTimestamp } from '@/lib/utils'
@@ -248,6 +248,7 @@ export default function ChatPanel() {
     isStreamingChat,
     setIsStreamingChat,
     setFocusedChunkId,
+    clearMessages,
   } = useMeetingStore()
 
   const transcriptRef = useRef(transcript)
@@ -304,6 +305,8 @@ export default function ChatPanel() {
             suggestion.type,
             suggestion.detail,
             suggestion.say,
+            suggestion.whyNow,
+            suggestion.listenFor,
             transcript,
             apiKey,
             settings,
@@ -336,7 +339,10 @@ export default function ChatPanel() {
   useEffect(() => {
     const handler = (e: Event) => {
       const suggestion = (e as CustomEvent<Suggestion>).detail
-      sendMessage(suggestion.title, true, suggestion)
+      const clickedPrompt = suggestion.say
+        ? `Expand: ${suggestion.title}\n${suggestion.say}`
+        : `Expand: ${suggestion.title}\n${suggestion.detail}`
+      sendMessage(clickedPrompt, true, suggestion)
     }
     window.addEventListener('suggestion-clicked', handler)
     return () => window.removeEventListener('suggestion-clicked', handler)
@@ -361,7 +367,19 @@ export default function ChatPanel() {
       {/* Column header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface-secondary flex-shrink-0">
         <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider">Meeting Assistant</h2>
-        <span className="text-text-faint text-xs">Ask anything · Click suggestions</span>
+        <div className="flex items-center gap-3">
+          <span className="text-text-faint text-xs">Ask anything · Click suggestions</span>
+          <button
+            type="button"
+            onClick={clearMessages}
+            disabled={messages.length === 0 || isStreamingChat}
+            className="inline-flex items-center gap-1 text-[11px] text-text-faint hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            aria-label="Clear assistant messages"
+          >
+            <Trash2 size={11} />
+            Clear
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -426,7 +444,7 @@ export default function ChatPanel() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={apiKey ? 'Ask about the meeting… (Enter to send)' : 'Add your Groq API key in Settings to use chat'}
+            placeholder={apiKey ? 'Ask about the meeting… Enter sends · Shift+Enter adds a new line' : 'Add your Groq API key in Settings to use chat'}
             rows={1}
             className="flex-1 bg-transparent text-text-primary text-sm placeholder-text-faint resize-none focus:outline-none max-h-32 overflow-y-auto"
             style={{ lineHeight: '1.5' }}
@@ -441,7 +459,7 @@ export default function ChatPanel() {
             <Send size={14} />
           </button>
         </div>
-        <p className="text-text-faint text-xs mt-1.5 px-1">Shift+Enter for new line</p>
+        <p className="text-text-faint text-xs mt-1.5 px-1">Enter sends · Shift+Enter adds a new line</p>
       </div>
     </div>
   )

@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { RefreshCw, Copy, Check, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
+import { RefreshCw, Copy, Check, Loader2, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import { generateSuggestionBatch } from '@/lib/suggestions'
 import type { SuggestionBatch, Suggestion } from '@/lib/store'
@@ -8,7 +8,7 @@ import type { SuggestionBatch, Suggestion } from '@/lib/store'
 const SUGGESTION_INTERVAL_S = 30
 const FIRST_BATCH_DELAY_S = 30
 const PRE_FIRE_S = 0
-const EVENT_TRIGGER_COOLDOWN_MS = 12000
+const EVENT_TRIGGER_COOLDOWN_MS = 6000
 
 const TYPE_STYLES: Record<
   string,
@@ -120,13 +120,15 @@ function SuggestionCard({
 function BatchBlock({
   batch,
   isNew,
+  defaultCollapsed,
   onClickDetail,
 }: {
   batch: SuggestionBatch
   isNew: boolean
+  defaultCollapsed?: boolean
   onClickDetail: (s: Suggestion) => void
 }) {
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false)
 
   return (
     <div className="space-y-1.5">
@@ -182,6 +184,7 @@ export default function SuggestionsPanel() {
     setIsGeneratingSuggestions,
     nextSuggestionIn,
     setNextSuggestionIn,
+    clearSuggestions,
   } = useMeetingStore()
 
   const [error, setError] = useState<string | null>(null)
@@ -364,6 +367,18 @@ export default function SuggestionsPanel() {
               ◈ Memory
             </span>
           )}
+          {suggestionBatches.length > 0 && (
+            <button
+              type="button"
+              onClick={clearSuggestions}
+              disabled={isGeneratingSuggestions}
+              className="inline-flex items-center gap-1 text-[11px] text-text-faint hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              aria-label="Clear suggestion batches"
+            >
+              <Trash2 size={11} />
+              Clear
+            </button>
+          )}
         </div>
         {isGeneratingSuggestions && (
           <Loader2 size={12} className="text-accent animate-spin" />
@@ -398,6 +413,7 @@ export default function SuggestionsPanel() {
             key={batch.id}
             batch={batch}
             isNew={i === 0}
+            defaultCollapsed={i > 0}
             onClickDetail={handleClickDetail}
           />
         ))}

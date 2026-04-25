@@ -33,11 +33,13 @@ const PLAYBOOKS: Record<string, string[]> = {
     'If the interviewer asks a direct question, help the candidate answer first; do not burn the moment on a meta-question.',
   ],
   'Investor Pitch': [
-    'Bias toward credibility, wedge clarity, defensibility, and what the current traction really proves.',
-    'If a top-down claim appears, shift toward bottom-up evidence or a sharper segment definition.',
+    'Bias toward credibility, strategic clarity, evidence quality, and what the current traction or progress really proves.',
+    'If a broad market or strategy claim appears, shift toward sharper evidence, segmentation, or a clearer decision frame.',
     'Keep the founder out of hand-wavy mode; move them toward concrete learning and strategic tradeoffs.',
     'If the investor asks a direct question, at least one top suggestion should help answer it directly before suggesting a question back.',
-    'Do not ask the investor to define your wedge for you when they have already asked the founder directly.',
+    'Do not ask the room to define your own strategy for you when they have already asked the participant directly.',
+    'If the investor asks about wedge, answer where the company wins fastest and why before talking about TAM or broad market size.',
+    'If the room raises incumbent risk or security-review drag, make one suggestion address that objection directly instead of leaving it implicit.',
   ],
   'Customer Discovery': [
     'Bias toward truth-seeking over pitching: quantify pain, current workaround, owner, and priority.',
@@ -53,6 +55,7 @@ const PLAYBOOKS: Record<string, string[]> = {
     'Bias toward turning vague feedback into something observable, specific, and time-bound.',
     'Preserve trust: probe directly without sounding defensive or overly apologetic.',
     'Prefer one clean clarifying question over multiple soft acknowledgements.',
+    'If the feedback is vague, help the participant ask for one concrete example, the pattern behind it, and what "better" should look like over the stated time window.',
   ],
   'Brainstorm': [
     'Bias toward decision criteria, convergence, and stopping idea-sprawl at the right moment.',
@@ -63,6 +66,7 @@ const PLAYBOOKS: Record<string, string[]> = {
     'Bias toward strategy, leverage, capital allocation, and durable advantage — not update-mode detail.',
     'Translate operating noise into board-level tradeoffs the room can actually decide on.',
     'If a metric miss appears, connect it to a strategic decision rather than defending the metric alone.',
+    'If multiple strategic threads are live, do not collapse them into one narrow prompt; surface the trade-off, the leverage question, and the unresolved growth or packaging decision separately.',
   ],
   'Team Review': [
     'Bias toward outcomes, named owners, recurring patterns, and interventions that change the system.',

@@ -1,6 +1,6 @@
 'use client'
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { Mic, MicOff, Copy, Check, Monitor } from 'lucide-react'
+import { Mic, MicOff, Copy, Check, Monitor, Trash2 } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import type { Sentiment } from '@/lib/store'
 import { transcribeAudio, isHallucination } from '@/lib/transcription'
@@ -13,7 +13,7 @@ const STABLE_COMMIT_INTERVAL_MS = 30000
 const MIN_BLOB_BYTES    = 3000    // ~3KB minimum; silence-only WebM is ~1-2KB overhead
 const MIN_FRAGMENT_CHARS = 40
 const SENTIMENT_DEBOUNCE_MS = 1500
-const EVENT_TRIGGER_COOLDOWN_MS = 12000
+const EVENT_TRIGGER_COOLDOWN_MS = 6000
 
 const LANGUAGES = [
   { code: 'en', label: 'English',    flag: '🇺🇸' },
@@ -316,6 +316,7 @@ export default function TranscriptPanel() {
     meetingContext,
     setLiveTranscriptPreview,
     setMeetingState,
+    clearTranscript,
   } = useMeetingStore()
 
   const transcriptRef = useRef(transcript)
@@ -398,10 +399,6 @@ export default function TranscriptPanel() {
     }, SENTIMENT_DEBOUNCE_MS)
   }, [transcript.length, updateChunkSentiment])
 
-  useEffect(() => {
-    setMeetingState(deriveMeetingState(transcript, meetingContext, ''))
-  }, [meetingContext, setMeetingState, transcript])
-
   const handleCopy = (id: string, text: string) => {
     navigator.clipboard.writeText(text)
     setCopied(id)
@@ -425,9 +422,10 @@ export default function TranscriptPanel() {
     const state = deriveMeetingState(transcriptRef.current, meetingContextRef.current, previewText)
     setMeetingState(state)
 
-    if (!state.triggerReason) return
+    const effectiveReason = state.triggerReason ?? (state.decisionFocus ? 'focus_shift' : null)
+    if (!effectiveReason) return
 
-    const fingerprint = `${state.triggerReason}:${state.currentQuestion ?? ''}:${state.riskyClaim ?? ''}:${state.blocker ?? ''}:${state.loopStatus ?? ''}`
+    const fingerprint = `${effectiveReason}:${state.questionIntent ?? ''}:${state.currentQuestion ?? ''}:${state.decisionFocus ?? ''}:${state.riskyClaim ?? ''}:${state.blocker ?? ''}:${state.loopStatus ?? ''}`
     const now = Date.now()
 
     if (fingerprint === lastTriggerFingerprintRef.current) return
@@ -437,10 +435,15 @@ export default function TranscriptPanel() {
     lastTriggerFingerprintRef.current = fingerprint
     window.dispatchEvent(
       new CustomEvent('meeting-copilot:suggestion-trigger', {
-        detail: { reason: state.triggerReason },
+        detail: { reason: effectiveReason },
       })
     )
   }, [setMeetingState])
+
+  useEffect(() => {
+    if (liveTranscriptPreview.trim()) return
+    updateDerivedState('')
+  }, [liveTranscriptPreview, meetingContext, transcript, updateDerivedState])
 
   const commitStableText = useCallback((text: string) => {
     const cleaned = text.trim()
@@ -775,6 +778,17 @@ export default function TranscriptPanel() {
               className="text-[11px] text-text-faint hover:text-text-primary transition-colors"
             >
               {showContextForm ? 'Hide context' : 'Edit context'}
+            </button>
+          )}
+          {!isRecording && transcript.length > 0 && (
+            <button
+              type="button"
+              onClick={clearTranscript}
+              className="inline-flex items-center gap-1 text-[11px] text-text-faint hover:text-text-primary transition-colors"
+              aria-label="Clear transcript"
+            >
+              <Trash2 size={11} />
+              Clear
             </button>
           )}
           {isProcessing && (

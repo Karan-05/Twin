@@ -55,6 +55,20 @@ export interface IntelligenceSummary {
   openQuestions: string[]
 }
 
+const EMPTY_MEETING_STATE: MeetingState = {
+  mode: 'probe',
+  currentQuestion: null,
+  questionIntent: null,
+  blocker: null,
+  riskyClaim: null,
+  decisionFocus: null,
+  deadlineSignal: null,
+  loopStatus: null,
+  stakeholderSignals: [],
+  triggerReason: null,
+  updatedAt: null,
+}
+
 interface MeetingStore {
   apiKey: string
   isRecording: boolean
@@ -96,6 +110,9 @@ interface MeetingStore {
   addSuggestionBatch: (batch: SuggestionBatch) => void
   addMessage: (message: Message) => void
   updateLastMessage: (content: string) => void
+  clearTranscript: () => void
+  clearSuggestions: () => void
+  clearMessages: () => void
   clearSession: () => void
 }
 
@@ -113,18 +130,7 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
   settings: loadSettings(),
   meetingContext: { meetingType: '', userRole: '', goal: '', prepNotes: '', proofPoints: '' },
   liveTranscriptPreview: '',
-  meetingState: {
-    mode: 'probe',
-    currentQuestion: null,
-    blocker: null,
-    riskyClaim: null,
-    decisionFocus: null,
-    deadlineSignal: null,
-    loopStatus: null,
-    stakeholderSignals: [],
-    triggerReason: null,
-    updatedAt: null,
-  },
+  meetingState: EMPTY_MEETING_STATE,
   intelligenceSummary: null,
   isExtractingIntelligence: false,
   priorMeetingContext: null,
@@ -170,6 +176,25 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
         msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content }
       return { messages: msgs }
     }),
+  clearTranscript: () =>
+    set({
+      transcript: [],
+      liveTranscriptPreview: '',
+      intelligenceSummary: null,
+      focusedChunkId: null,
+      meetingState: EMPTY_MEETING_STATE,
+    }),
+  clearSuggestions: () =>
+    set({
+      suggestionBatches: [],
+      nextSuggestionIn: 30,
+      isGeneratingSuggestions: false,
+    }),
+  clearMessages: () =>
+    set({
+      messages: [],
+      isStreamingChat: false,
+    }),
   clearSession: () =>
     set({
       transcript: [],
@@ -182,17 +207,6 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
       liveTranscriptPreview: '',
       intelligenceSummary: null,
       meetingContext: { meetingType: '', userRole: '', goal: '', prepNotes: '', proofPoints: '' },
-      meetingState: {
-        mode: 'probe',
-        currentQuestion: null,
-        blocker: null,
-        riskyClaim: null,
-        decisionFocus: null,
-        deadlineSignal: null,
-        loopStatus: null,
-        stakeholderSignals: [],
-        triggerReason: null,
-        updatedAt: null,
-      },
+      meetingState: EMPTY_MEETING_STATE,
     }),
 }))

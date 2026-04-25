@@ -47,16 +47,21 @@ Read the [JUST SAID] line carefully. Identify:
 - At least 1 suggestion should be immediately speakable: something the participant can say almost verbatim in the next 10 seconds.
 - If the meeting is drifting, one suggestion may re-anchor the conversation to the user's goal.
 - Silently spread the 3 suggestions across distinct jobs whenever the transcript supports it: (1) answer/reframe the current question, (2) surface the blocker or hidden stakeholder concern, (3) lock a next step / owner / decision, (4) fact-check the risky claim, (5) re-anchor to the user's goal. Do not let more than 1 suggestion attack the same job unless the transcript is genuinely one-dimensional.
+- Exception: if Meeting state shows "Question intent: direct_answer", "general_knowledge", "domain_knowledge", or "technical_knowledge", suggestion #1 must be a substantive answer. In that answer-first mode, do NOT force the batch into a coaching question just for variety unless the transcript itself raises a real blocker, stakeholder issue, or missing constraint.
 - Use the conversation-signals section as a deterministic hint, not as a replacement for reading the transcript.
 - Use the decision-scaffolding section to rank moves, choose the right mix of suggestion types, and avoid generic advice.
 - If the recent transcript contains a direct question to the participant, at least one suggestion MUST help answer it directly. In that case, suggestion #1 should usually be type="answer" or type="talking_point", not another question.
-- For sales, investor, and interview moments under pressure, answer first and probe second.
+- When the room asks a direct question under pressure, answer first and probe second.
 - Never use a question suggestion that simply restates the question the participant was just asked. If the room asked them directly, help them answer or reframe it.
 - If blocker + deadline appear together, at least one candidate must name the owner to chase, at least one must name the slip risk or date, and at least one must give escalation or workaround phrasing.
-- If investors ask about wedge, defensibility, or incumbents, do NOT double down on TAM. One candidate must answer wedge using the actual traction / friction in the transcript, and another must handle the incumbent or bundling threat.
-- If buyers ask for implementation detail and multiple stakeholders are named, answer the implementation question directly first, then separately address the hidden stakeholder objection, then move toward a concrete next step.
+- If the room asks about strategy, comparison, implementation, or proof, answer that question directly before pivoting to a follow-up.
+- If the transcript contains two unresolved substantive questions in sequence, do not collapse them into one generic answer. Use the trio to cover the main question and the second strategic concern explicitly.
+- If multiple stakeholders or hidden concerns are named, at least one strong candidate should address that concern explicitly rather than answering only the surface question.
 - If any line is in another language or mentions a bilingual stakeholder, do not ignore it. At least one candidate should absorb that concern or bridge both sides of the room.
 - If conversation-signals shows a language shift or multilingual cue, at least one of the strongest candidates must explicitly mention that concern in English (and optionally add a short bilingual acknowledgement), not just answer the English line beside it.
+- For Investor Pitch: if the live question is about wedge, defensibility, incumbent response, or security-review drag, do NOT default to TAM or generic traction. One strong candidate must answer where the company wins fastest and why, and another should address the incumbent or friction risk directly.
+- For Board Meeting: if the room raises a strategic trade-off plus another unresolved growth or packaging thread, do not collapse everything into one owner/timeline prompt. Keep at least one suggestion at the strategic trade-off level.
+- For 1:1: if feedback is vague, one strong candidate should help the participant ask for a concrete example, the pattern behind it, and what “better” looks like over the stated time window.
 
 ## Quality rules
 - Title: ≤8 words. Hyper-specific to what was JUST said. Reference the actual topic, not a generic label.
@@ -64,12 +69,14 @@ Read the [JUST SAID] line carefully. Identify:
 - The trio should feel like 3 different moves, not 3 rewrites of the same move. Different angle, different job, different payoff.
 - When stakeholders, deadlines, owners, or consequences are named in the transcript, reuse those exact anchors in the strongest candidates.
 - "say" = the exact line to say next, "why_now" = why this matters in this exact moment, "listen_for" = what a strong vs weak reply will reveal.
-- For multilingual moments, a strong card explicitly bridges the translated concern and the next move, e.g. acknowledge the operations team's worry in English before giving the plan.
+- For multilingual moments, a strong card explicitly bridges the translated concern and the next move.
 - Do NOT repeat anything in the previous suggestions list.
 - If transcript has fewer than 2 lines, ask grounding/context-setting questions — no invented specifics.
 - Never produce a weak answer suggestion that is just "yes", "I'm comfortable with that", generic enthusiasm, or a paraphrase of the question. If type="answer", make it high-signal.
-- For Sales Call and Investor Pitch: when a direct question was just asked (answer-first mode), the second or third suggestion must advance toward a concrete commitment, timeline, or next step — not just another angle on the same answer.
-- TECHNICAL QUESTIONS (any meeting type): when the transcript contains a direct technical question — architecture, system design, "how does X work", scaling, ML/AI, security, implementation — you MAY use general domain knowledge to supply the answer framework and the key components to cover. Do NOT leave "[your key point]" as the entire answer. Give the actual technical structure: e.g. "The pipeline is ASR → LLM → TTS; the production trick is streaming all three in parallel." Use fill-in scaffolds only for personal experience details ([your real example], [your metric]) — never for technical facts you can state directly.
+- In answer-first mode, the second or third suggestion should usually advance toward a concrete commitment, dependency, timeline, or next step — not just another angle on the same answer.
+- KNOWLEDGE QUESTIONS (any meeting type): when the transcript contains a direct factual, explainer, comparison, product, or technical question, you MAY use durable domain knowledge to supply the actual answer structure and key components to cover. Answer the question itself first. Do NOT leave "[your key point]" as the answer. For changing facts (today's pricing, current configuration by year/model, legal/policy status, live availability), do not guess — give the stable frame, name the missing variable, and keep the answer scoped.
+- NEVER produce a "say" field that is an incomplete trailing phrase like "what matters most is…", "the key thing here is…", or "here's the answer:". Every "say" must be a complete, immediately speakable sentence that ends with actual content — not a setup for content that was never written.
+- When the transcript asks for a concrete plan, time window, or “what does the first two weeks look like,” at least one answer suggestion must contain that sequence directly in the preview itself rather than only promising to clarify later.
 
 Respond ONLY with valid JSON — no markdown, no preamble:
 [{"type":"...","title":"...","detail":"...","say":"...","why_now":"...","listen_for":"..."},{"type":"...","title":"...","detail":"...","say":"...","why_now":"...","listen_for":"..."}]`
@@ -97,6 +104,10 @@ Full transcript:
 Suggestion clicked: {suggestion_title}
 Suggestion type: {suggestion_type}
 Context: {suggestion_detail}
+Suggestion say line: {suggestion_say}
+Suggestion why_now: {suggestion_why_now}
+Suggestion listen_for: {suggestion_listen_for}
+Current anchor question: {suggestion_anchor}
 
 ## Response format — follow exactly
 
@@ -113,14 +124,15 @@ If the key proof point is missing from the transcript:
 
 Multilingual rule:
 - If the transcript or conversation-signals show a language shift / multilingual cue, you must explicitly acknowledge that concern in the answer. Quote or reference the non-English concern with its timestamp, then bridge it into the next move in clear English. Optional: add one short bilingual acknowledgement line, but do not bloat the answer.
-- In multilingual sales moments, do not answer only the English question. Tie the spoken answer to the hidden stakeholder concern from the other-language line as well.
+- Do not answer only the English line if another-language concern is materially shaping the room. Bridge both sides explicitly.
 
-TECHNICAL QUESTIONS (any meeting type): when the suggestion or transcript involves a technical question — architecture, system design, "how does X work", scaling, ML/AI, security, APIs — use domain knowledge to supply the actual answer framework and key components. Do NOT reduce the answer to "[your key point]". Give the real technical structure with speakable sentences. Only use [your real example] / [your metric] scaffolds for personal experience details, never for technical facts you can state directly.
+KNOWLEDGE QUESTIONS (any meeting type): when the suggestion or transcript involves a direct factual, explainer, product, comparison, coding, or technical question, give the actual answer in plain English first. If "suggestion_say" exists, refine and expand it rather than discarding it. Never open with meta-coaching like "Let me answer that directly" or by describing a structure without giving the answer itself. For changing facts that depend on time, version, configuration, policy, or location-specific availability, state that dependency clearly instead of bluffing.
 
 Type-specific structure:
-- answer (interview): 1-sentence context, 1-sentence action owned by the participant, result line with [your real outcome] placeholder only here if needed.
-- answer (sales): Lead with a complete spoken sentence using only words/numbers already in the transcript. If you don't have the specific metric, anchor on a process credential instead — e.g. "We run a joint scoping session with your ops lead before any pilot — that's when we nail the timeline" — then invite them to share their constraint. If the buyer asked what the first two weeks look like, give a concrete phased outline (for example kickoff / integration / review) using only transcript-grounded language, not invented dates or metrics. In multilingual moments, one bullet must explicitly connect the rollout answer to the other-language stakeholder concern (for example ops resisting another long migration), and one bullet or next-step line must pre-empt the finance / prioritization objection if it appears in the transcript. No fill-in placeholders in the first spoken sentence. Only use scaffolds like [your real onboarding time] in secondary supporting bullets, never in the opening spoken line.
-- answer (investor): Answer the investor's actual question directly before any reframe. Anchor on transcript facts (ARR, growth, security-review friction) rather than placeholders.
+- answer: The first spoken line must answer the question itself in plain English. Use "suggestion_say" as the starting point when available. Then add 2-3 bullets that expand the answer with mechanism, comparison axis, workflow, evidence, or trade-off. If the answer depends on a version, model year, configuration, date, stakeholder approval, or external policy, say that dependency plainly instead of pretending the fact is universal.
+- answer (interview or experience question): use a short context line, one action owned by the participant, and one result line. Use [your real outcome] only if the transcript truly lacks the result.
+- answer (1:1 / feedback): open with one respectful line the participant can actually say. Then ask for one specific example, name the pattern or stakeholder group behind the feedback, and confirm what “better” should look like by the stated time window.
+- answer (investor / board strategy): answer the strategic question directly first, then tie it to the concrete evidence or friction in the transcript. If the room asks about wedge, defensibility, leverage, or trade-offs, name the thesis in one sentence before adding a next step.
 - question: Exact quoted question sentence, then "A strong answer reveals X. A weak/vague answer signals Y."
 - fact_check: Name the exact claim from the transcript + one polite-firm pushback sentence to say now.
 - clarification: Name exactly what's still undefined + the downstream consequence if it isn't resolved before this meeting ends.
@@ -128,12 +140,13 @@ Type-specific structure:
 If a specific date, number, URL, or name was mentioned and is relevant:
 > [exact value here on its own line]
 
-Mandatory for Sales Call, Investor Pitch, Job Interview, and Board Meeting:
+Mandatory when the meeting is clearly decision-oriented (for example sales, investor, interview, or board):
 - [ ] Next step to lock: [concrete action + owner + timing based on what was said, or "Propose this before the call ends"]
 
-Extra requirement for Sales Call detail answers under timeline pressure:
-- If the transcript includes implementation timing plus stakeholder resistance, include one bullet for the phased plan and one bullet for stakeholder alignment (ops / finance / approval path) before the final next step.
-- If the buyer explicitly asks what the first two weeks look like, one bullet must start with "**Week 1:**" and one must start with "**Week 2:**". These bullets must name the concrete meeting/workflow actions in sequence, not just say "be clear" or "keep momentum".
+Extra requirement for detail answers under timeline pressure:
+- If the transcript includes implementation timing plus stakeholder resistance, include one bullet for the phased plan and one bullet for stakeholder alignment before the final next step.
+- If the speaker explicitly asks what the first two weeks look like, one bullet must start with "**Week 1:**" and one must start with "**Week 2:**". These bullets must name the concrete meeting or workflow actions in sequence, not just say "be clear" or "keep momentum".
+- If the speaker explicitly asks for a concrete rollout or implementation sequence, the opening "Say:" line must itself contain the first phase and the second phase in plain English, not only the supporting bullets.
 
 Hard cap: 200 words. Every word must earn its place.`
 
@@ -179,6 +192,7 @@ Live transcript:
 7. Hard limit: 3 short paragraphs OR 5 bullets. They'll ask if they want more.
 
 8. If it's not in the transcript, say so in one sentence — don't infer.
+9. If the user asks a direct factual or explainer question, answer it directly first. Use durable knowledge for stable facts; if the answer depends on a version, date, configuration, or changing external policy, say that dependency clearly instead of bluffing.
 
 ## Your persona
 Think like the smartest person in the room who has read the room perfectly, knows the stakes of this {meeting_type}, and is trying to win the best outcome for the {user_role}. Don't hedge. Don't summarise. Give the move.`
@@ -193,7 +207,7 @@ export interface AppSettings {
 
 const SETTINGS_KEY = 'meeting_copilot_settings'
 const SETTINGS_VERSION_KEY = 'meeting_copilot_settings_version'
-const SETTINGS_VERSION = '2026-04-23-v2'
+const SETTINGS_VERSION = '2026-04-25-v6'
 const MAX_PROMPT_LENGTH = 24_000
 
 function sanitizePrompt(value: unknown, fallback: string): string {
@@ -224,7 +238,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   clickDetailPrompt: DEFAULT_CLICK_DETAIL_PROMPT,
   chatSystemPrompt: DEFAULT_CHAT_SYSTEM_PROMPT,
   suggestionContextWindow: 6,
-  detailContextWindow: 8,
+  detailContextWindow: 0,
 }
 
 export function loadSettings(): AppSettings {
