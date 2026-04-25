@@ -14,7 +14,7 @@ import {
 } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import type { MeetingState } from './meetingState'
-import { buildMeetingStateSection } from './meetingState'
+import { buildMeetingStateSection, deriveMeetingState } from './meetingState'
 import { withGroqTextBudget } from './groqBudget'
 
 const VALID_TYPES = new Set(['question', 'talking_point', 'answer', 'fact_check', 'clarification'])
@@ -557,6 +557,8 @@ function scoreSuggestion(
   let score = 0
   const latestText = recentChunks[recentChunks.length - 1]?.text.toLowerCase() ?? ''
   const combinedText = `${suggestion.title} ${suggestion.detail} ${suggestion.say ?? ''}`.toLowerCase()
+  const currentQuestionLower = meetingState?.currentQuestion?.toLowerCase() ?? ''
+  const questionCategory = meetingState?.currentQuestion ? inferQuestionCategory(meetingState.currentQuestion) : null
 
   if (meetingState?.currentQuestion) {
     if (suggestion.type === 'answer') score += 4
@@ -610,6 +612,17 @@ function scoreSuggestion(
   if (multilingualSignals.length > 0) {
     if (/\bbilingual\b|\bspanish\b|\boperations\b|\bfinance\b|\bmigration\b|\bapproval\b/.test(combinedText)) score += 1.1
     if (suggestion.type === 'answer' && /\bweek 1\b|\bweek 2\b|\bfirst\b|\bsecond\b/.test(combinedText)) score += 0.8
+  }
+
+  if (
+    meetingState?.questionIntent === 'direct_answer' &&
+    questionCategory === 'implementation' &&
+    /\bfirst two weeks\b|\bimplementation timeline\b|\bmoved forward\b|\bmove forward\b/.test(currentQuestionLower)
+  ) {
+    if (suggestion.type === 'answer') score += 4.5
+    if (suggestion.type === 'talking_point') score += 1.25
+    if (suggestion.type === 'question') score -= 4.5
+    if (/\bweek 1\b|\bweek 2\b|\boperations\b|\bfinance\b|\bq4\b|\bmigration\b/.test(combinedText)) score += 1.6
   }
 
   if (suggestion.say) score += 1.5
@@ -919,6 +932,11 @@ export async function generateSuggestionBatch(
   const promptChunks = options.liveTranscriptPreview?.trim()
     ? [...recentChunks, { id: 'live-preview', text: options.liveTranscriptPreview.trim(), timestamp: 'LIVE' }]
     : recentChunks
+  const effectiveMeetingState = options.meetingState ?? deriveMeetingState(
+    transcript,
+    meetingContext,
+    options.liveTranscriptPreview?.trim() ?? ''
+  )
   const previousSuggestions = previousBatches.flatMap((batch) => batch.suggestions)
   const latestQuestionText = selectActionableQuestion(promptChunks, meetingContext)?.text
   const systemPersona = buildSystemPersona(meetingContext.meetingType)
@@ -928,7 +946,7 @@ export async function generateSuggestionBatch(
     meetingContext,
     previousBatches.slice(0, 2),
     priorMeetingContext,
-    options
+    { ...options, meetingState: effectiveMeetingState }
   )
   const transcriptSnapshot = promptChunks.map((c) => c.text).join(' ')
 
@@ -954,7 +972,7 @@ export async function generateSuggestionBatch(
     suggestions = []
   }
 
-  const fallbackSuggestions = buildFallbackSuggestions(promptChunks, meetingContext, options.meetingState)
+  const fallbackSuggestions = buildFallbackSuggestions(promptChunks, meetingContext, effectiveMeetingState)
   const previousTitleKeys = new Set(previousSuggestions.map((s) => s.title.trim().toLowerCase()))
   const combinedCandidates = sanitizeSuggestions(
     [
@@ -965,7 +983,7 @@ export async function generateSuggestionBatch(
     latestQuestionText
   )
 
-  suggestions = rankSuggestions(combinedCandidates, promptChunks, meetingContext, options.meetingState)
+  suggestions = rankSuggestions(combinedCandidates, promptChunks, meetingContext, effectiveMeetingState)
 
   // Single last-resort pad — 2 real suggestions + 1 generic pad beats a broken contextual one.
   if (suggestions.length < 3) {

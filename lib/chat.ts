@@ -21,11 +21,17 @@ const DETAIL_CONTEXT_CHAR_BUDGET = 3600
 const CHAT_MAX_TOKENS = 700
 const DETAIL_MAX_TOKENS = 580
 
-function isWeakDetailedAnswer(text: string, suggestionType: string): boolean {
+function isWeakDetailedAnswer(
+  text: string,
+  suggestionType: string,
+  transcript: TranscriptChunk[],
+  meetingContext: MeetingContext
+): boolean {
   const trimmed = text.trim()
   if (!trimmed) return true
   if (!/\*\*In short:\*\*/.test(trimmed)) return true
   if (/(?:\n|\r)\s*[-:]\s*$/.test(trimmed) || /[:\-–]\s*$/.test(trimmed)) return true
+  if ((trimmed.match(/"/g)?.length ?? 0) % 2 === 1) return true
 
   const minimumLength = suggestionType === 'answer' || suggestionType === 'talking_point' ? 220 : 150
   if (trimmed.length < minimumLength) return true
@@ -37,6 +43,18 @@ function isWeakDetailedAnswer(text: string, suggestionType: string): boolean {
 
   if ((suggestionType === 'answer' || suggestionType === 'talking_point') && !/Say:/i.test(trimmed)) return true
   if (bulletCount < (suggestionType === 'answer' || suggestionType === 'talking_point' ? 3 : 2)) return true
+
+  const joinedTranscript = transcript.map((chunk) => chunk.text).join(' ')
+  const needsPhasedPlan =
+    meetingContext.meetingType === 'Sales Call' &&
+    /\bfirst two weeks\b|\bimplementation timeline\b|\bmoved forward\b|\bmove forward\b/i.test(joinedTranscript) &&
+    /\boperations\b|\bfinance\b|\bq4\b|\bmigraci[oó]n\b|\bbilingual\b|sí\b/i.test(`${joinedTranscript} ${meetingContext.prepNotes ?? ''}`)
+
+  if (needsPhasedPlan) {
+    if (!/\bWeek\s*1\b/i.test(trimmed) || !/\bWeek\s*2\b/i.test(trimmed)) return true
+    if (!/\boperations\b/i.test(trimmed) || !/\bfinance\b/i.test(trimmed)) return true
+    if (!/Next step to lock/i.test(trimmed)) return true
+  }
 
   return false
 }
@@ -130,12 +148,14 @@ function buildRoleAwareDetailFallback(
     /\b(first two weeks|implementation timeline|move forward|moved forward|implementation)\b/i.test(openQuestion?.text ?? '') &&
     /\b(bilingual|operations|ops|finance|approval|q4)\b/i.test(`${meetingContext.prepNotes ?? ''} ${latest?.text ?? ''} ${openQuestion?.text ?? ''}`)
   ) {
+    const rolloutSayIsConcrete = suggestionSay && /\bweek 1\b|\bweek 2\b|\boperations\b|\bfinance\b|\bq4\b/i.test(suggestionSay)
     return [
       `**In short:** Answer the rollout sequence directly, then tie it to the hidden stakeholder concern before locking the next step.`,
       openQuestion ? `- Rollout question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Give a direct implementation sequence, not a vague reassurance.',
+      '- Spanish concern to absorb: **operations** does not want another long migration this quarter, so keep the first phase explicitly lightweight.',
       '- **Week 1:** run the kickoff with the operations stakeholders, map the current workflow, and confirm what stays lightweight so this does not become another long migration.',
       '- **Week 2:** review the first working path with operations and finance, surface any approval blocker, and decide whether this is concrete enough to prioritize now instead of waiting for **Q4**.',
-      hasConcreteSay
+      rolloutSayIsConcrete
         ? `> "Say: ${suggestionSay}"`
         : '> "Say: Week 1 is a kickoff with operations to map the current workflow and keep the rollout lightweight. Week 2 is a review of the first working path with operations and finance so we can decide now, not wait for Q4."',
       '- [ ] Next step to lock: confirm who from operations and finance needs to see that walkthrough, and by when.',
@@ -609,7 +629,7 @@ export async function* streamDetailedAnswer(
     if (delta) fullResponse += delta
   }
 
-  if (isWeakDetailedAnswer(fullResponse, suggestionType)) {
+  if (isWeakDetailedAnswer(fullResponse, suggestionType, transcript, meetingContext)) {
     console.warn('[streamDetailedAnswer] Groq returned weak/incomplete detail, using local fallback instead')
     yield buildLocalDetailedFallback(suggestionTitle, suggestionType, suggestionDetail, suggestionSay, transcript, meetingContext)
     return
