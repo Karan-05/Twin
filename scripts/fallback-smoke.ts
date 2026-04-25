@@ -219,6 +219,60 @@ assert(
 )
 
 // ---------------------------------------------------------------------------
+// Scenario 9: Interview behavioral question — direct-answer routing
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 9] Interview behavioral question — direct-answer routing')
+
+const interviewChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:09:01', text: 'Can you share a time you had to make a decision with incomplete information?' },
+  { id: '2', timestamp: '00:09:15', text: 'And how did you align engineering and product when they disagreed?' },
+]
+
+const interviewContext: MeetingContext = {
+  meetingType: 'Job Interview',
+  userRole: 'Candidate',
+  goal: 'Answer clearly and show strong judgment',
+}
+
+const interviewState = deriveMeetingState(interviewChunks, interviewContext)
+const interviewSuggestions = buildFallbackSuggestions(interviewChunks, interviewContext, interviewState)
+
+assert(
+  interviewState.questionIntent === 'direct_answer',
+  'classifies behavioral interview questions as direct-answer, not meeting coaching'
+)
+assert(
+  interviewSuggestions.some((s) => s.type === 'answer'),
+  'returns an answer-first fallback for behavioral interview questions'
+)
+assert(
+  !interviewSuggestions.some((s) => /latest topic|would you like to know more|does that make sense/i.test(`${s.title} ${s.detail} ${s.say ?? ''}`)),
+  'does not collapse interview questions into check-ins or placeholder topics'
+)
+
+// ---------------------------------------------------------------------------
+// Scenario 10: Low-signal check-ins — stay in coaching mode
+// ---------------------------------------------------------------------------
+console.log('\n[Scenario 10] Low-signal check-ins — stay in coaching mode')
+
+const checkInChunks: TranscriptChunk[] = [
+  { id: '1', timestamp: '00:10:00', text: 'Would you like to know more about that?' },
+  { id: '2', timestamp: '00:10:12', text: 'Does that make sense, or should I go deeper?' },
+]
+
+const checkInState = deriveMeetingState(checkInChunks, { meetingType: 'Sales Call', userRole: 'Seller' })
+const checkInSuggestions = buildFallbackSuggestions(checkInChunks, { meetingType: 'Sales Call', userRole: 'Seller' }, checkInState)
+
+assert(
+  checkInState.questionIntent === 'meeting_coaching',
+  'classifies low-signal check-ins as meeting coaching'
+)
+assert(
+  !checkInSuggestions.some((s) => s.type === 'answer' && /answer the/i.test(`${s.title} ${s.detail}`)),
+  'does not force low-signal check-ins into an answer-first fallback'
+)
+
+// ---------------------------------------------------------------------------
 // Results
 // ---------------------------------------------------------------------------
 console.log(`\n${'─'.repeat(50)}`)

@@ -28,8 +28,9 @@ export type QuestionCategory =
 
 export type QuestionIntent =
   | 'meeting_coaching'
+  | 'direct_answer'
   | 'general_knowledge'
-  | 'product_knowledge'
+  | 'domain_knowledge'
   | 'technical_knowledge'
 
 interface QuestionCandidate extends SignalLine {
@@ -95,17 +96,18 @@ const QUESTION_TOPIC_PATTERNS = [
   /\b(?:what is|what's|how does|how do|explain|walk me through|tell me about|talk about|discuss(?:ing)?)\s+(.+?)(?:[?.,]|$)/i,
 ]
 
-const SELLERISH_ROLE_PATTERN = /\b(seller|account executive|sales manager)\b/i
-const LOW_SIGNAL_SALES_QUESTION_PATTERN = /\b(would you like to know more|does that make sense|how does that sound|sound good|would that help|would that be useful|what do you think about that|is that something you'd want)\b/i
+const LOW_SIGNAL_CHECKIN_PATTERN = /\b(would you like to know more|does that make sense|how does that sound|sound good|would that help|would that be useful|what do you think about that|is that something you'd want)\b/i
 const LOW_SIGNAL_SOCIAL_PATTERN = /\b(how are you|how's it going|what's up|where are you (?:living|staying|based|located)|where do you live|brother|thank you)\b/i
-const SELLER_DISCOVERY_PROMPT_PATTERN = /^(?:can you share|could you share|would you like|do you want|how would you want|what would you like|anything special|is there anything|is it|can we|should we)\b/i
+const PROBING_PROMPT_PATTERN = /^(?:(?:can|could)\s+you\s+share\b.*\b(?:how many|which|what|who)\b|would you like\b|do you want\b|how would you want\b|what would you like\b|anything special\b|is there anything\b|can we\b|should we\b|which matters most\b|what matters most\b)/i
+const EXPERIENCE_QUESTION_PATTERN = /\b(?:tell me about|walk me through|can you share|could you share|describe)\b.*\b(?:a time|an example|experience|project|situation|instance|decision|conflict|challenge|failure|mistake)\b/i
 const ANSWERISH_SENTENCE_PATTERN = /^(?:yes|yeah|yep|no|nope|i\b|we\b|they\b|about\b|around\b|roughly\b|approximately\b|tens?\b|a few\b|not really\b|i don't think so\b|that works\b|sounds good\b|fine\b|okay\b)/i
 const DEEP_TECH_SIGNAL_PATTERN = /\b(tokenization|tokenisation|embedding|embeddings|transformer|attention|next token|inference|latency|throughput|architecture|pipeline|security|api|integration|model|scal(?:e|ing)|hallucinat)\b/i
 const SHALLOW_TECH_PATTERN = /\bhow (does|do|can|to)\b.*\b(work|works|system|platform|agent|pipeline|integration|architecture|api|security|model)\b/i
 const DIRECT_KNOWLEDGE_PATTERN = /\b(what is|what's|where is|where are|who is|who are|when is|when did|why does|why do|how does|how do|how can|how to|define|explain|tell me about|walk me through|difference between|compare|versus|vs|meaning of)\b/i
 const MEETING_CONTROL_PATTERN = /\b(who owns|owner|by when|next step|before we wrap|can you be more specific|what should we do|should we|do we want to|what do you think|what would make|how should we think about|would you like to know more|does that make sense|sound good|what workflow matters|who else will weigh in)\b/i
-const PRODUCT_KNOWLEDGE_PATTERN = /\b(what kind of|what does .* do|who is .* for|how is .* used|use case|workflow|configuration|configurations|pricing|plan|tier|sku|edition|package|feature set|capabilities)\b/i
-const CONCRETE_PRODUCT_SIGNAL_PATTERN = /\b(deliver|delivery|ship|shipping|timeline|lead time|price|pricing|budget|quantity|how many|units?|seats?|licenses?|configuration|customization|software|engrave|engraved|color|colour|space gray|space grey|model|ram|storage|gpu|specs?)\b/i
+const DOMAIN_KNOWLEDGE_PATTERN = /\b(what kind of|what does .* do|who is .* for|how is .* used|use case|workflow|configuration|configurations|pricing|plan|tier|sku|edition|package|feature set|capabilities|model|ram|storage|gpu|specs?|delivery|shipping|lead time|customization|software)\b/i
+const PARTICIPANT_ANSWER_PATTERN = /\b(can you|could you|would you|why did you|how did you|what did you|where did you|when did you|who did you)\b/i
+const SHORT_BINARY_CHECK_PATTERN = /^(?:is it|is that|are they|are there)\b/i
 
 function cleanText(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
@@ -290,25 +292,34 @@ export function selectActionableQuestion(
 ): SignalLine | null {
   const questions = extractQuestionCandidates(chunks)
   if (questions.length === 0) return null
+  const scored = questions
+    .map((line, index) => {
+      const normalized = stripQuestionLeadIn(line.text)
+      const lower = normalized.toLowerCase()
+      const category = inferQuestionCategory(normalized)
+      const intent = inferQuestionIntent(normalized, context)
+      let score = 0
 
-  const sellerishSalesContext =
-    context?.meetingType === 'Sales Call' &&
-    SELLERISH_ROLE_PATTERN.test(context?.userRole ?? '')
+      if (!line.resolvedInChunk) score += 4
+      else score -= 2
 
-  const unresolved = questions.filter((line) => !line.resolvedInChunk)
-  if (!sellerishSalesContext) return unresolved[0] ?? questions[0]
+      score += Math.max(0, questions.length - index) * 0.45
 
-  return unresolved.find((line) =>
-    !LOW_SIGNAL_SALES_QUESTION_PATTERN.test(line.text) &&
-    !LOW_SIGNAL_SOCIAL_PATTERN.test(line.text) &&
-    !SELLER_DISCOVERY_PROMPT_PATTERN.test(stripQuestionLeadIn(line.text))
-  ) ?? unresolved.find((line) =>
-    !LOW_SIGNAL_SALES_QUESTION_PATTERN.test(line.text) &&
-    !LOW_SIGNAL_SOCIAL_PATTERN.test(line.text)
-  ) ?? unresolved[0] ?? questions.find((line) =>
-    !LOW_SIGNAL_SALES_QUESTION_PATTERN.test(line.text) &&
-    !LOW_SIGNAL_SOCIAL_PATTERN.test(line.text)
-  ) ?? questions[0]
+      if (isLowSignalSocialText(normalized)) score -= 8
+      if (LOW_SIGNAL_CHECKIN_PATTERN.test(lower)) score -= 5
+      if (intent === 'meeting_coaching') score -= 2.5
+      else score += 2
+
+      if (EXPERIENCE_QUESTION_PATTERN.test(lower)) score += 2
+      if (DIRECT_KNOWLEDGE_PATTERN.test(lower)) score += 1.5
+      if (category !== 'general') score += 1
+      if (SHORT_BINARY_CHECK_PATTERN.test(lower) && normalized.length <= 28 && category === 'general') score -= 1.5
+
+      return { line, score }
+    })
+    .sort((left, right) => right.score - left.score)
+
+  return scored[0]?.line ?? null
 }
 
 export function isTechnicalQuestion(
@@ -322,7 +333,7 @@ export function inferQuestionCategory(text: string): QuestionCategory {
   const lower = stripQuestionLeadIn(text).toLowerCase()
   if (/\bwhere is\b|\bwhere are\b|\blocated\b|\blocation\b/.test(lower)) return 'location'
   if (/\bwho is\b|\bwho are\b|\bwhose\b/.test(lower)) return 'person'
-  if (/\bwhen is\b|\bwhen did\b|\bwhat year\b|\bwhat time\b|\bwhen does\b/.test(lower)) return 'timing'
+  if (/^when\b|\bwhen is\b|\bwhen did\b|\bwhat year\b|\bwhat time\b|\bwhen does\b|\bwhen can\b|\bwhen will\b|\bwhen should\b/.test(lower)) return 'timing'
   if (/\bwhat is\b|\bwhat's\b|\bdefine\b|\bmeaning of\b/.test(lower)) return 'definition'
   if (/\bhow does\b|\bhow do\b|\bhow can\b|\bhow to\b|\bworks?\b/.test(lower)) return 'mechanism'
   if (/\bcompare\b|\bversus\b|\bvs\b|\bdifference\b|\bbetter than\b/.test(lower)) return 'comparison'
@@ -337,40 +348,29 @@ export function inferQuestionIntent(
   context?: { meetingType?: string; userRole?: string }
 ): QuestionIntent {
   const lower = stripQuestionLeadIn(text).toLowerCase()
-  const sellerishSalesContext =
-    context?.meetingType === 'Sales Call' &&
-    SELLERISH_ROLE_PATTERN.test(context?.userRole ?? '')
 
-  if (LOW_SIGNAL_SALES_QUESTION_PATTERN.test(lower)) return 'meeting_coaching'
+  if (LOW_SIGNAL_CHECKIN_PATTERN.test(lower)) return 'meeting_coaching'
   if (LOW_SIGNAL_SOCIAL_PATTERN.test(lower)) return 'meeting_coaching'
   if (MEETING_CONTROL_PATTERN.test(lower)) return 'meeting_coaching'
-  if (sellerishSalesContext && SELLER_DISCOVERY_PROMPT_PATTERN.test(lower)) return 'meeting_coaching'
+  if (PROBING_PROMPT_PATTERN.test(lower) && !EXPERIENCE_QUESTION_PATTERN.test(lower)) return 'meeting_coaching'
+  if (EXPERIENCE_QUESTION_PATTERN.test(lower)) return 'direct_answer'
 
-  if (sellerishSalesContext && PRODUCT_KNOWLEDGE_PATTERN.test(lower) && !DEEP_TECH_SIGNAL_PATTERN.test(lower)) {
-    return 'product_knowledge'
+  if (DOMAIN_KNOWLEDGE_PATTERN.test(lower) && !DEEP_TECH_SIGNAL_PATTERN.test(lower) && !PARTICIPANT_ANSWER_PATTERN.test(lower)) {
+    return 'domain_knowledge'
   }
 
   if (DEEP_TECH_SIGNAL_PATTERN.test(lower) || SHALLOW_TECH_PATTERN.test(lower)) {
-    if (sellerishSalesContext && /\bwhat kind of\b|\bwhat does .* do\b|\bworkflow\b/i.test(lower)) {
-      return 'product_knowledge'
-    }
     return 'technical_knowledge'
-  }
-
-  if (sellerishSalesContext && DIRECT_KNOWLEDGE_PATTERN.test(lower)) {
-    return 'product_knowledge'
-  }
-
-  if (sellerishSalesContext && CONCRETE_PRODUCT_SIGNAL_PATTERN.test(lower)) {
-    return 'product_knowledge'
   }
 
   if (DIRECT_KNOWLEDGE_PATTERN.test(lower)) return 'general_knowledge'
 
   if (QUESTION_PREFIXES.some((prefix) => lower.startsWith(`${prefix} `))) {
-    return sellerishSalesContext ? 'product_knowledge' : 'general_knowledge'
+    if (PARTICIPANT_ANSWER_PATTERN.test(lower) || /\byou\b|\byour\b/.test(lower)) return 'direct_answer'
+    return 'general_knowledge'
   }
 
+  void context
   return 'meeting_coaching'
 }
 

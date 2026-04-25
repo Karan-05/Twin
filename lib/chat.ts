@@ -60,10 +60,14 @@ function buildLocalChatFallback(
 
   if (questionIntent !== 'meeting_coaching') {
     return [
-      '**In short:** Answer the knowledge question on **' + topic + '** directly first — then bridge it back to the meeting.',
+      `**In short:** ${questionIntent === 'direct_answer'
+        ? 'Answer the live question on **' + topic + '** directly first — then make it useful for the meeting.'
+        : 'Answer the knowledge question on **' + topic + '** directly first — then bridge it back to the meeting.'}`,
       question ? `- Open question: "${question.text}" [${question.timestamp}]` : `- Topic: **${topic}**`,
       buildKnowledgeSupportLine(topic, category),
-      '- If the fact depends on a version, date, configuration, or policy, state that variable explicitly instead of bluffing.',
+      questionIntent === 'direct_answer'
+        ? '- If the answer depends on the participant’s experience, timing, or constraints, make that dependency explicit instead of bluffing.'
+        : '- If the fact depends on a version, date, configuration, or policy, state that variable explicitly instead of bluffing.',
       `- Your question: "${userMessage}"`,
       '- Groq is temporarily rate-limited, so this is a local answer-first fallback rather than a full model answer.',
     ].join('\n')
@@ -141,8 +145,10 @@ function buildLocalDetailedFallback(
       '',
       `**In short:** Answer the question on **${topic}** itself first — then bridge it back to why it matters here.`,
       buildKnowledgeSupportLine(topic, category),
-      questionIntent === 'product_knowledge'
+      questionIntent === 'domain_knowledge'
         ? '- Treat it as a domain or product question: say what it is for, where it fits, and which variable would change the recommendation.'
+        : questionIntent === 'direct_answer'
+          ? '- Treat it as a direct answer moment: answer plainly, then add the one concrete implication, dependency, or next move that makes the answer useful.'
         : '- If the answer depends on scale, version, date, configuration, or policy, state that dependency plainly instead of bluffing.',
       suggestionSay
         ? `> "Say: ${suggestionSay}"`

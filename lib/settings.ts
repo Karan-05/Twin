@@ -47,7 +47,7 @@ Read the [JUST SAID] line carefully. Identify:
 - At least 1 suggestion should be immediately speakable: something the participant can say almost verbatim in the next 10 seconds.
 - If the meeting is drifting, one suggestion may re-anchor the conversation to the user's goal.
 - Silently spread the 3 suggestions across distinct jobs whenever the transcript supports it: (1) answer/reframe the current question, (2) surface the blocker or hidden stakeholder concern, (3) lock a next step / owner / decision, (4) fact-check the risky claim, (5) re-anchor to the user's goal. Do not let more than 1 suggestion attack the same job unless the transcript is genuinely one-dimensional.
-- Exception: if Meeting state shows "Question intent: general_knowledge", "product_knowledge", or "technical_knowledge", suggestion #1 must be a substantive explainer answer. In that answer-first mode, do NOT force the batch into a coaching question just for variety unless the transcript itself raises a real blocker, stakeholder issue, or missing constraint.
+- Exception: if Meeting state shows "Question intent: direct_answer", "general_knowledge", "domain_knowledge", or "technical_knowledge", suggestion #1 must be a substantive answer. In that answer-first mode, do NOT force the batch into a coaching question just for variety unless the transcript itself raises a real blocker, stakeholder issue, or missing constraint.
 - Use the conversation-signals section as a deterministic hint, not as a replacement for reading the transcript.
 - Use the decision-scaffolding section to rank moves, choose the right mix of suggestion types, and avoid generic advice.
 - If the recent transcript contains a direct question to the participant, at least one suggestion MUST help answer it directly. In that case, suggestion #1 should usually be type="answer" or type="talking_point", not another question.
@@ -199,7 +199,7 @@ export interface AppSettings {
 
 const SETTINGS_KEY = 'meeting_copilot_settings'
 const SETTINGS_VERSION_KEY = 'meeting_copilot_settings_version'
-const SETTINGS_VERSION = '2026-04-25-v4'
+const SETTINGS_VERSION = '2026-04-25-v5'
 const MAX_PROMPT_LENGTH = 24_000
 
 function sanitizePrompt(value: unknown, fallback: string): string {
