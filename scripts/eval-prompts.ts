@@ -3,19 +3,9 @@ import path from 'node:path'
 import process from 'node:process'
 import Groq from 'groq-sdk'
 import { DEFAULT_SETTINGS } from '../lib/settings.ts'
-
-type TranscriptChunk = {
-  timestamp: string
-  text: string
-}
-
-type MeetingContext = {
-  meetingType: string
-  userRole: string
-  goal: string
-  prepNotes?: string
-  proofPoints?: string
-}
+import type { MeetingContext, Suggestion, TranscriptChunk } from '../lib/store.ts'
+import { generateSuggestionBatch } from '../lib/suggestions.ts'
+import { streamDetailedAnswer } from '../lib/chat.ts'
 
 type Scenario = {
   id: string
@@ -25,21 +15,6 @@ type Scenario = {
   mustCoverAny?: string[]
   antiPatterns?: string[]
   detailScenario?: string
-}
-
-type Suggestion = {
-  type: string
-  title: string
-  detail: string
-  say?: string
-  whyNow?: string
-  listenFor?: string
-}
-
-type PromptBundle = {
-  liveSuggestionPrompt: string
-  clickDetailPrompt: string
-  chatSystemPrompt: string
 }
 
 type EvalResult = {
@@ -56,42 +31,6 @@ type EvalResult = {
 
 type JsonShape = 'object' | 'array'
 const MAX_AUTOMATIC_RETRY_WAIT_MS = 90_000
-
-const RESPONSE_GUARDRAILS = `You are a live meeting copilot. Never invent customer names, metrics, timelines, proof points, roles, or examples that are not explicitly present in the transcript or user message. If a stronger answer needs missing facts, use a fill-in-the-blank scaffold like [insert your real example] instead of fabricating.`
-
-const QUESTION_PREFIXES = [
-  'what', 'why', 'how', 'when', 'where', 'who', 'which', 'would', 'could', 'should', 'can', 'do',
-  'does', 'did', 'is', 'are', 'was', 'were', 'will', 'have', 'has', 'had'
-]
-
-const COMMITMENT_PATTERN = /\b(will|i'll|we'll|going to|next step|follow up|send|share|deliver|commit|owner|deadline|by\s+(monday|tuesday|wednesday|thursday|friday|tomorrow|next week|end of day|eod|q[1-4]))\b/i
-const RISK_PATTERN = /\b(not sure|unsure|maybe|depends|blocked|blocker|risk|concern|issue|problem|later|eventually|hard|difficult|can't|cannot|won't|similar|nice to have|budget|timeline|approval)\b/i
-const NUMBER_PATTERN = /(?:\$|€|£|¥)?\b\d+(?:[.,]\d+)?\s*(?:%|percent|k|m|b|million|billion|days?|weeks?|months?|years?)?\b/i
-const MULTILINGUAL_PATTERN = /[^\x00-\x7F]|\b(sí|si|porque|equipo|operaciones|trimestre|gracias|hola|vale|pero|también|tambien|necesita|necesitamos|migraci[oó]n|largo|larga)\b/i
-const STOPWORDS = new Set([
-  'the', 'and', 'that', 'this', 'with', 'from', 'have', 'they', 'them', 'their', 'there', 'about',
-  'would', 'could', 'should', 'into', 'than', 'then', 'when', 'what', 'where', 'while', 'which',
-  'who', 'your', 'you', 'our', 'ours', 'we', 'us', 'for', 'are', 'was', 'were', 'been', 'being',
-  'will', 'just', 'said', 'says', 'also', 'only', 'really', 'very', 'more', 'most', 'much', 'many',
-  'some', 'like', 'kind', 'sort', 'need', 'want', 'make', 'made', 'does', 'doing', 'did', 'done',
-  'can', 'cant', 'cannot', 'not', 'yes', 'yeah', 'okay', 'well', 'right', 'maybe', 'into', 'over',
-  'under', 'than', 'after', 'before', 'because', 'through', 'across', 'around', 'meeting', 'call'
-])
-const VALID_TYPES = new Set(['question', 'talking_point', 'answer', 'fact_check', 'clarification'])
-const GENERIC_TITLE_PATTERN = /^(helpful suggestion|talking point|question to ask|follow[- ]up|next step|idea|answer)$/i
-const STAKEHOLDER_PATTERN = /\b(finance|ops|operations|design|legal|customer success|support|board|investor|recruiter|manager|lead|leadership|ceo|cto|cfo|sales|security|qa|product)\b/gi
-const DEADLINE_PATTERN = /\b(today|tomorrow|friday|monday|tuesday|wednesday|thursday|next week|end of day|eod|deadline|this quarter|q[1-4])\b/i
-const OWNER_OR_TIMELINE_PATTERN = /\b(owner|who can|who owns|make the call|deadline|by when|tomorrow|friday|next step|follow up|escalat|workaround|qa|legal|security review|q[1-4])\b/i
-
-type EvalMeetingState = {
-  currentQuestion: string | null
-  blocker: string | null
-  riskyClaim: string | null
-  deadlineSignal: string | null
-  loopStatus: string | null
-  decisionFocus: string | null
-  stakeholderSignals: string[]
-}
 
 function parseArgs(argv: string[]) {
   const args = new Set(argv)
@@ -112,14 +51,6 @@ async function loadScenarios(): Promise<Scenario[]> {
   const raw = await fs.readFile(filePath, 'utf8')
   const parsed = JSON.parse(raw) as { scenarios: Scenario[] }
   return parsed.scenarios
-}
-
-async function loadPromptBundle(): Promise<PromptBundle> {
-  return {
-    liveSuggestionPrompt: DEFAULT_SETTINGS.liveSuggestionPrompt,
-    clickDetailPrompt: DEFAULT_SETTINGS.clickDetailPrompt,
-    chatSystemPrompt: DEFAULT_SETTINGS.chatSystemPrompt,
-  }
 }
 
 function extractJsonCandidate(raw: string, shape: JsonShape): string {
@@ -314,561 +245,49 @@ async function createJsonCompletion(
   }
 }
 
-function cleanText(text: string): string {
-  return text.replace(/\s+/g, ' ').trim()
+function toRuntimeTranscript(chunks: Scenario['transcript']): TranscriptChunk[] {
+  return chunks.map((chunk, index) => ({
+    id: `eval-${index + 1}`,
+    timestamp: chunk.timestamp,
+    text: chunk.text,
+  }))
 }
 
-function splitSentences(text: string): string[] {
-  return cleanText(text)
-    .split(/(?<=[.?!])\s+/)
-    .map((part) => part.trim())
-    .filter(Boolean)
+async function collectStream(stream: AsyncGenerator<string>): Promise<string> {
+  let full = ''
+  for await (const chunk of stream) full += chunk
+  return full.trim()
 }
 
-function extractTopics(chunks: TranscriptChunk[], limit = 5): string[] {
-  const scores = new Map<string, number>()
-
-  chunks.forEach((chunk, chunkIndex) => {
-    const weight = chunkIndex === chunks.length - 1 ? 3 : 1
-    const words = cleanText(chunk.text).toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) ?? []
-    words.forEach((word) => {
-      if (STOPWORDS.has(word)) return
-      scores.set(word, (scores.get(word) ?? 0) + weight)
-    })
-  })
-
-  return Array.from(scores.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([word]) => word)
-}
-
-function extractSignalLines(chunks: TranscriptChunk[], pattern: RegExp, limit = 3): string[] {
-  return chunks
-    .filter((chunk) => pattern.test(chunk.text))
-    .map((chunk) => `- [${chunk.timestamp}] ${cleanText(chunk.text)}`)
-    .slice(-limit)
-    .reverse()
-}
-
-function extractQuestions(chunks: TranscriptChunk[]): string[] {
-  const lines: string[] = []
-  for (const chunk of chunks) {
-    for (const sentence of splitSentences(chunk.text)) {
-      const lower = sentence.toLowerCase()
-      if (sentence.includes('?') || QUESTION_PREFIXES.some((prefix) => lower.startsWith(`${prefix} `))) {
-        lines.push(`- [${chunk.timestamp}] ${sentence}`)
-      }
-    }
-  }
-  return lines.slice(-3).reverse()
-}
-
-function buildConversationSignalsSection(chunks: TranscriptChunk[]): string {
-  const topics = extractTopics(chunks)
-  const multilingual = extractSignalLines(chunks, MULTILINGUAL_PATTERN, 2)
-  const sections = [
-    '## Conversation signals',
-    `Likely live topics: ${topics.length ? topics.join(' · ') : 'none extracted yet'}`,
-    'Recent questions',
-    ...(extractQuestions(chunks).length ? extractQuestions(chunks) : ['- none']),
-    'Claims / numbers worth checking',
-    ...(extractSignalLines(chunks, NUMBER_PATTERN).length ? extractSignalLines(chunks, NUMBER_PATTERN) : ['- none']),
-    'Commitments / next steps mentioned',
-    ...(extractSignalLines(chunks, COMMITMENT_PATTERN).length ? extractSignalLines(chunks, COMMITMENT_PATTERN) : ['- none']),
-    'Risks / ambiguity / blockers',
-    ...(extractSignalLines(chunks, RISK_PATTERN).length ? extractSignalLines(chunks, RISK_PATTERN) : ['- none']),
-    'Language shifts / multilingual cues',
-    ...(multilingual.length ? multilingual : ['- none']),
-  ]
-
-  return sections.join('\n')
-}
-
-function buildDecisionScaffoldingSection(chunks: TranscriptChunk[], scenario: Scenario): string {
-  const signals = {
-    questions: extractQuestions(chunks),
-    risks: extractSignalLines(chunks, RISK_PATTERN),
-    numericClaims: extractSignalLines(chunks, NUMBER_PATTERN),
-    commitments: extractSignalLines(chunks, COMMITMENT_PATTERN),
-  }
-
-  let mode = 'Re-anchor the conversation to the real objective'
-  let mix = 'talking_point → question → clarification'
-
-  if (signals.questions.length > 0) {
-    mode = 'Answer or probe the open question'
-    mix = 'answer → question → clarification'
-  } else if (signals.risks.length > 0 && signals.commitments.length > 0) {
-    mode = 'Unblock a hidden risk or ambiguity'
-    mix = 'clarification → question → talking_point'
-  } else if (signals.numericClaims.length > 0) {
-    mode = 'Pressure-test the risky claim'
-    mix = 'fact_check → question → talking_point'
-  } else if (signals.commitments.length > 0) {
-    mode = 'Lock the next step before drift'
-    mix = 'question → clarification → talking_point'
-  }
-
-  const opportunities = [
-    ...signals.questions.map((line) => `- Open question: ${line.replace(/^- /, '')}`),
-    ...signals.risks.map((line) => `- Risk / ambiguity: ${line.replace(/^- /, '')}`),
-    ...signals.numericClaims.map((line) => `- Claim / number: ${line.replace(/^- /, '')}`),
-    ...signals.commitments.map((line) => `- Commitment / next step: ${line.replace(/^- /, '')}`),
-  ].slice(0, 4)
-
-  return [
-    '## Decision scaffolding',
-    `Primary mode: ${mode}`,
-    `Recommended suggestion mix: ${mix}`,
-    'Highest-leverage opportunities right now:',
-    ...(opportunities.length ? opportunities : ['- none extracted yet']),
-    'Anti-goals:',
-    '- Do not give generic advice.',
-    '- Do not ignore the freshest leverage point.',
-    '- Do not invent missing evidence.',
-    ...(scenario.meetingContext.prepNotes ? ['- Use prep context as a ranking hint, not as fabricated evidence.'] : []),
-  ].join('\n')
-}
-
-function buildMeetingStateSection(chunks: TranscriptChunk[]): string {
-  const questions = extractQuestions(chunks)
-  const risks = extractSignalLines(chunks, RISK_PATTERN)
-  const numericClaims = extractSignalLines(chunks, NUMBER_PATTERN)
-  const commitments = extractSignalLines(chunks, COMMITMENT_PATTERN)
-
-  return [
-    '## Meeting state',
-    `Current question: ${questions[0]?.replace(/^- \[[^\]]+\]\s*/, '') ?? 'none'}`,
-    `Blocker: ${risks[0]?.replace(/^- \[[^\]]+\]\s*/, '') ?? 'none'}`,
-    `Risky claim: ${numericClaims[0]?.replace(/^- \[[^\]]+\]\s*/, '') ?? 'none'}`,
-    `Next-step signal: ${commitments[0]?.replace(/^- \[[^\]]+\]\s*/, '') ?? 'none'}`,
-  ].join('\n')
-}
-
-function findFinancePressureLine(chunks: TranscriptChunk[]): TranscriptChunk | null {
-  for (let index = chunks.length - 1; index >= 0; index -= 1) {
-    if (/\b(finance|q4|prioriti[sz]e|priority|approval|stall internally|stalls internally)\b/i.test(chunks[index].text)) {
-      return chunks[index]
-    }
-  }
-
-  return null
-}
-
-function translateMultilingualConcern(text: string): string {
-  const lower = text.toLowerCase()
-  if (/operaciones/.test(lower) && /migraci[oó]n/.test(lower) && /(trimestre|quarter)/.test(lower)) {
-    return 'another long migration this quarter for the operations team'
-  }
-
-  if (/operaciones/.test(lower) && /migraci[oó]n/.test(lower)) {
-    return 'a long migration for the operations team'
-  }
-
-  return text
-}
-
-function findTimelineQuestionLine(chunks: TranscriptChunk[]): TranscriptChunk | null {
-  for (let index = chunks.length - 1; index >= 0; index -= 1) {
-    if (/\b(first two weeks|implementation timeline|moved forward|move forward)\b/i.test(chunks[index].text)) {
-      return chunks[index]
-    }
-  }
-
-  return null
-}
-
-function findCoreConcernLine(chunks: TranscriptChunk[]): TranscriptChunk | null {
-  for (let index = chunks.length - 1; index >= 0; index -= 1) {
-    if (/\b(biggest concern|implementation timeline|concern for us)\b/i.test(chunks[index].text)) {
-      return chunks[index]
-    }
-  }
-
-  return null
-}
-
-function findStallRiskLine(chunks: TranscriptChunk[]): TranscriptChunk | null {
-  for (let index = chunks.length - 1; index >= 0; index -= 1) {
-    if (/\bstall internally|stalls internally|fuzzy\b/i.test(chunks[index].text)) {
-      return chunks[index]
-    }
-  }
-
-  return null
-}
-
-function buildMultilingualDetailOverride(scenario: Scenario, suggestionType: string): string {
-  if (scenario.meetingContext.meetingType !== 'Sales Call') return ''
-
-  const multilingualCueLine = extractSignalLines(scenario.transcript, MULTILINGUAL_PATTERN, 2)[0]
-  const timelineQuestion = findTimelineQuestionLine(scenario.transcript)
-  if (!multilingualCueLine || !timelineQuestion) return ''
-
-  const cueText = multilingualCueLine.replace(/^- \[[^\]]+\]\s*/, '')
-  const cueTimestamp = multilingualCueLine.match(/^\- \[([^\]]+)\]/)?.[1] ?? 'LIVE'
-  const coreConcern = findCoreConcernLine(scenario.transcript)
-  const financeLine = findFinancePressureLine(scenario.transcript)
-  const stallRisk = findStallRiskLine(scenario.transcript)
-  const translatedConcern = translateMultilingualConcern(cueText)
-
-  const evidenceLines = [
-    `"${timelineQuestion.text}" [${timelineQuestion.timestamp}]`,
-    `"${cueText}" [${cueTimestamp}]`,
-  ]
-
-  if (financeLine) {
-    evidenceLines.push(`"${financeLine.text}" [${financeLine.timestamp}]`)
-  }
-
-  const week1Line = coreConcern
-    ? `- **Week 1:** run a scoped kickoff around the buyer's stated concern — **${coreConcern.text}** [${coreConcern.timestamp}] — align with **ops** on the current workflow, and make explicit what is NOT becoming another long migration this quarter [${cueTimestamp}].`
-    : `- **Week 1:** run a scoped kickoff around the implementation-timeline concern [${timelineQuestion.timestamp}], align with **ops** on the current workflow, and make explicit what is not becoming another long migration this quarter [${cueTimestamp}].`
-
-  const week2Line = stallRisk
-    ? `- **Week 2:** show the first working path, review it with **ops**, and confirm with the buyer that the rollout is concrete enough that this does not **stall internally** [${stallRisk.timestamp}].`
-    : `- **Week 2:** show the first working path, review it with **ops**, and confirm the rollout is concrete enough to keep momentum.`
-
-  const stakeholderLine = financeLine
-    ? `- **Stakeholder alignment:** tie the **ops** migration concern [${cueTimestamp}] to **finance**'s why-now-vs-**Q4** question [${financeLine.timestamp}] by saying the first-two-weeks plan is the proof point they can use to decide whether to prioritize this now.`
-    : `- **Stakeholder alignment:** connect the **ops** migration concern [${cueTimestamp}] to the implementation answer so the room hears both execution and stakeholder safety.`
-
-  const nextStepLine = financeLine
-    ? `- [ ] **Next step to lock:** propose a concrete walkthrough with **operations** and **finance** before this slips toward **Q4** [${financeLine.timestamp}].`
-    : `- [ ] **Next step to lock:** propose a concrete walkthrough with the implementation stakeholders before the call ends.`
-
-  return [
-    `**Evidence:** ${evidenceLines.join(' ; ')} ; Spanish stakeholder concern translated: "${translatedConcern}" [${cueTimestamp}]`,
-    '**In short:** Give the two-week rollout in sequence, tie it to the ops migration concern, then use that plan to answer the finance why-now objection.',
-    week1Line,
-    week2Line,
-    stakeholderLine,
-    '> "Say: I hear the concern about another long migration for ops this quarter [' + cueTimestamp + ']. Week 1 is a scoped kickoff with ops to map the current workflow and confirm what stays lightweight. Week 2 is a review of the first working path so you and finance can judge whether this is concrete enough to move before ' + (financeLine ? `Q4 [${financeLine.timestamp}]` : 'it slows down internally') + '."',
-    nextStepLine,
-  ].join('\n')
-}
-
-function normalizeType(raw: string): Suggestion['type'] {
-  const normalized = raw.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z_]/g, '')
-  return VALID_TYPES.has(normalized) ? normalized : 'question'
-}
-
-function semanticSimilarity(left: Pick<Suggestion, 'title' | 'detail'>, right: Pick<Suggestion, 'title' | 'detail'>): number {
-  const leftSet = new Set(
-    cleanText(`${left.title} ${left.detail}`).toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g)?.filter((token) => !STOPWORDS.has(token)) ?? []
-  )
-  const rightSet = new Set(
-    cleanText(`${right.title} ${right.detail}`).toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g)?.filter((token) => !STOPWORDS.has(token)) ?? []
+async function generateSuggestions(apiKey: string, scenario: Scenario): Promise<Suggestion[]> {
+  const transcript = toRuntimeTranscript(scenario.transcript)
+  const batch = await generateSuggestionBatch(
+    transcript,
+    apiKey,
+    DEFAULT_SETTINGS,
+    scenario.meetingContext,
+    [],
+    undefined,
+    {}
   )
 
-  if (leftSet.size === 0 || rightSet.size === 0) return 0
-
-  let overlap = 0
-  for (const token of leftSet) {
-    if (rightSet.has(token)) overlap += 1
-  }
-
-  return overlap / Math.min(leftSet.size, rightSet.size)
+  return batch.suggestions
 }
 
-function isSemanticDuplicate(candidate: Pick<Suggestion, 'title' | 'detail'>, existing: Array<Pick<Suggestion, 'title' | 'detail'>>): boolean {
-  return existing.some((item) => {
-    const exactTitle = item.title.trim().toLowerCase() === candidate.title.trim().toLowerCase()
-    return exactTitle || semanticSimilarity(candidate, item) >= 0.72
-  })
-}
-
-function sanitizeSuggestions(suggestions: Suggestion[]): Suggestion[] {
-  const cleaned: Suggestion[] = []
-  const seenTitles = new Set<string>()
-
-  for (const suggestion of suggestions) {
-    const title = suggestion.title.replace(/\s+/g, ' ').trim()
-    const detail = suggestion.detail.replace(/\s+/g, ' ').trim()
-    if (!title || !detail) continue
-    if (title.length < 6 || detail.length < 30) continue
-    if (GENERIC_TITLE_PATTERN.test(title)) continue
-    if (seenTitles.has(title.toLowerCase())) continue
-    if (isSemanticDuplicate({ title, detail }, cleaned)) continue
-
-    cleaned.push({
-      ...suggestion,
-      title,
-      detail,
-    })
-    seenTitles.add(title.toLowerCase())
-  }
-
-  return cleaned
-}
-
-function deriveEvalMeetingState(chunks: TranscriptChunk[], meetingContext: MeetingContext): EvalMeetingState {
-  const questions = extractQuestions(chunks)
-  const risks = extractSignalLines(chunks, RISK_PATTERN)
-  const numericClaims = extractSignalLines(chunks, NUMBER_PATTERN)
-  const commitments = extractSignalLines(chunks, COMMITMENT_PATTERN)
-  const stakeholders = Array.from(new Set(`${chunks.map((chunk) => chunk.text).join(' ')} ${meetingContext.prepNotes ?? ''}`
-    .match(STAKEHOLDER_PATTERN)?.map((item) => item.toLowerCase()) ?? [])).slice(0, 6)
-
-  const recent = chunks.slice(-4).map((chunk) => chunk.text.toLowerCase()).join(' ')
-  const loopStatus = /still|again|keeps looping|looping|same issue|same problem/.test(recent)
-    ? 'Conversation appears to be looping without a decision rule.'
-    : null
-
-  return {
-    currentQuestion: questions[0]?.replace(/^- \[[^\]]+\]\s*/, '') ?? null,
-    blocker: risks[0]?.replace(/^- \[[^\]]+\]\s*/, '') ?? null,
-    riskyClaim: numericClaims[0]?.replace(/^- \[[^\]]+\]\s*/, '') ?? null,
-    deadlineSignal: commitments.find((line) => DEADLINE_PATTERN.test(line))?.replace(/^- \[[^\]]+\]\s*/, '')
-      ?? risks.find((line) => DEADLINE_PATTERN.test(line))?.replace(/^- \[[^\]]+\]\s*/, '')
-      ?? null,
-    loopStatus,
-    decisionFocus: extractTopics(chunks, 2).join(' / ') || meetingContext.goal || null,
-    stakeholderSignals: stakeholders,
-  }
-}
-
-function scoreSuggestion(suggestion: Suggestion, chunks: TranscriptChunk[], meetingContext: MeetingContext, meetingState: EvalMeetingState): number {
-  let score = 0
-  const latestText = chunks[chunks.length - 1]?.text.toLowerCase() ?? ''
-  const combinedText = `${suggestion.title} ${suggestion.detail} ${suggestion.say ?? ''} ${suggestion.whyNow ?? ''} ${suggestion.listenFor ?? ''}`.toLowerCase()
-
-  if (meetingState.currentQuestion) {
-    if (suggestion.type === 'answer') score += 4
-    if (suggestion.type === 'talking_point') score += 2
-    if (suggestion.type === 'question') score -= 3
-    const questionTokens = meetingState.currentQuestion.match(/[a-z][a-z0-9_-]{2,}/g) ?? []
-    score += questionTokens.filter((token) => !STOPWORDS.has(token) && combinedText.includes(token)).slice(0, 4).length * 0.35
-  }
-
-  if (meetingState.riskyClaim && suggestion.type === 'fact_check') score += 3
-  if (meetingState.blocker && (suggestion.type === 'clarification' || suggestion.type === 'question')) score += 2
-  if (meetingState.deadlineSignal && suggestion.type === 'question') score += 1.5
-  if (meetingState.loopStatus && (suggestion.type === 'clarification' || suggestion.type === 'talking_point')) score += 2
-
-  const stakeholderMatches = meetingState.stakeholderSignals.filter((stakeholder) => combinedText.includes(stakeholder)).length
-  score += Math.min(1.5, stakeholderMatches * 0.6)
-
-  if ((meetingState.blocker || meetingState.deadlineSignal) && OWNER_OR_TIMELINE_PATTERN.test(combinedText)) score += 1.25
-  if (meetingContext.goal && combinedText.includes(meetingContext.goal.toLowerCase().split(' ')[0] ?? '')) score += 0.5
-  if (meetingState.decisionFocus && combinedText.includes(meetingState.decisionFocus.toLowerCase().split(' ')[0] ?? '')) score += 0.75
-  if (latestText && combinedText.includes(latestText.split(' ')[0] ?? '')) score += 0.25
-
-  if (meetingContext.meetingType === 'Investor Pitch') {
-    if (/(wedge|beachhead|security review|upmarket|arr|month over month|mom)/i.test(combinedText)) score += 1
-    if (/(incumbent|bundle|defensibility|why now)/i.test(combinedText)) score += 0.9
-  }
-
-  if (meetingContext.meetingType === 'Sales Call') {
-    if (/(first two weeks|implementation|timeline|q4|finance|operations|ops|approval)/i.test(combinedText)) score += 1
-  }
-
-  if (/(bilingual|spanish|translated|translation|operations team|equipo de operaciones|migración larga|migracion larga)/i.test(combinedText)) score += 0.9
-  if ((meetingContext.prepNotes ?? '').toLowerCase().includes('bilingual') && /(operations|ops|finance|q4|internal approval|stall)/i.test(combinedText)) score += 0.75
-
-  if (suggestion.say) score += 1.5
-  if ((suggestion.say ?? suggestion.detail).length <= 180) score += 0.75
-
-  return score
-}
-
-function rankSuggestions(candidates: Suggestion[], chunks: TranscriptChunk[], meetingContext: MeetingContext, meetingState: EvalMeetingState): Suggestion[] {
-  const scored = candidates
-    .map((suggestion) => ({ ...suggestion, score: scoreSuggestion(suggestion, chunks, meetingContext, meetingState) }))
-    .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
-
-  const chosen: Suggestion[] = []
-  const usedTypes = new Set<string>()
-
-  for (const candidate of scored) {
-    if (chosen.length >= 3) break
-    if (chosen.length > 0 && isSemanticDuplicate(candidate, chosen)) continue
-    if (!usedTypes.has(candidate.type) || chosen.length >= 2) {
-      chosen.push(candidate)
-      usedTypes.add(candidate.type)
-    }
-  }
-
-  for (const candidate of scored) {
-    if (chosen.length >= 3) break
-    if (isSemanticDuplicate(candidate, chosen)) continue
-    chosen.push(candidate)
-  }
-
-  return chosen.slice(0, 3)
-}
-
-function buildFallbackSuggestions(chunks: TranscriptChunk[]): Suggestion[] {
-  const questions = extractQuestions(chunks)
-  const risks = extractSignalLines(chunks, RISK_PATTERN)
-  const numericClaims = extractSignalLines(chunks, NUMBER_PATTERN)
-  const commitments = extractSignalLines(chunks, COMMITMENT_PATTERN)
-  const fallbacks: Suggestion[] = []
-
-  if (questions[0]) {
-    fallbacks.push({
-      type: 'answer',
-      title: 'Answer the open question',
-      detail: `A direct question is still hanging: "${questions[0].replace(/^- \[[^\]]+\]\s*/, '')}". Give a concise answer now or ask one clarifying follow-up before the conversation moves on.`,
-      say: 'Answer the question directly before the room moves on.',
-      whyNow: 'An unanswered question is the highest-leverage interruption in the room.',
-      listenFor: 'Whether they accept the answer or expose a deeper objection.',
-    })
-  }
-
-  if (risks[0]) {
-    fallbacks.push({
-      type: 'clarification',
-      title: 'Clarify the risky assumption',
-      detail: `There is unresolved ambiguity in: "${risks[0].replace(/^- \[[^\]]+\]\s*/, '')}". Define the owner, timeline, or decision criterion now so this does not stay vague.`,
-      say: 'Can we pin down the owner, timeline, and decision rule on this before we move on?',
-      whyNow: 'The room is carrying ambiguity that will create downstream confusion.',
-      listenFor: 'A named owner and a concrete deadline instead of vague agreement.',
-    })
-  }
-
-  if (numericClaims[0]) {
-    fallbacks.push({
-      type: 'fact_check',
-      title: 'Pressure-test the number',
-      detail: `A concrete number or claim was stated: "${numericClaims[0].replace(/^- \[[^\]]+\]\s*/, '')}". Ask for the source, assumption, or comparison point before everyone starts treating it as fact.`,
-      say: 'What assumption or source is that number based on?',
-      whyNow: 'Once a number lands, the room will start planning around it unless it is tested.',
-      listenFor: 'A real source, baseline, or a sign the claim is softer than it sounds.',
-    })
-  }
-
-  if (commitments[0]) {
-    fallbacks.push({
-      type: 'question',
-      title: 'Lock the next step',
-      detail: `A commitment surfaced in: "${commitments[0].replace(/^- \[[^\]]+\]\s*/, '')}". Confirm the owner, exact deliverable, and timing so the meeting ends with a real next step.`,
-      say: 'Before we wrap, who owns that exactly and by when?',
-      whyNow: 'A soft commitment becomes real only when owner and timing are explicit.',
-      listenFor: 'A named owner, a deliverable, and an actual date.',
-    })
-  }
-
-  return sanitizeSuggestions(fallbacks)
-}
-
-function buildTranscriptLines(chunks: TranscriptChunk[]): string {
-  return chunks
-    .map((chunk, index) => index === chunks.length - 1 ? `[JUST SAID] ${chunk.text}` : `[${chunk.timestamp}] ${chunk.text}`)
-    .join('\n')
-}
-
-function interpolate(template: string, scenario: Scenario): string {
-  const conversationSignalsSection = buildConversationSignalsSection(scenario.transcript)
-  return template
-    .replace(/{meeting_type}/g, scenario.meetingContext.meetingType || 'General Meeting')
-    .replace(/{user_role}/g, scenario.meetingContext.userRole || 'Attendee')
-    .replace(/{user_goal_section}/g, scenario.meetingContext.goal ? `\nGoal: ${scenario.meetingContext.goal}` : '')
-    .replace(/{meeting_prep_section}/g, scenario.meetingContext.prepNotes ? `\nMeeting prep: ${scenario.meetingContext.prepNotes}` : '')
-    .replace(/{proof_points_section}/g, scenario.meetingContext.proofPoints ? `\nProof points I can use: ${scenario.meetingContext.proofPoints}` : '')
-    .replace(/{recent_transcript}/g, buildTranscriptLines(scenario.transcript))
-    .replace(/{full_transcript}/g, scenario.transcript.map((line) => `[${line.timestamp}] ${line.text}`).join('\n'))
-    .replace(/{trigger_reason_section}/g, '')
-    .replace(/{previous_suggestions_section}/g, '')
-    .replace(/{conversation_signals_section}/g, conversationSignalsSection)
-    .replace(/{decision_scaffolding_section}/g, buildDecisionScaffoldingSection(scenario.transcript, scenario))
-    .replace(/{meeting_state_section}/g, buildMeetingStateSection(scenario.transcript))
-}
-
-async function generateSuggestions(groq: Groq, prompts: PromptBundle, scenario: Scenario): Promise<Suggestion[]> {
-  const system = `You are a world-class real-time meeting strategist for a ${scenario.meetingContext.meetingType}. Return only valid JSON.`
-  const user = `${interpolate(prompts.liveSuggestionPrompt, scenario)}\n\nReturn a JSON array in this shape only: [{"type":"...","title":"...","detail":"...","say":"...","why_now":"...","listen_for":"..."}]`
-
-  const raw = await createJsonCompletion(
-    groq,
-    [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
-    'array',
-    900,
-    0.45,
-    false
-  )
-
-  let parsed: Array<{
-    type: string
-    title: string
-    detail: string
-    say?: string
-    why_now?: string
-    listen_for?: string
-  }>
-
-  try {
-    parsed = parseJsonCandidate<Array<{
-      type: string
-      title: string
-      detail: string
-      say?: string
-      why_now?: string
-      listen_for?: string
-    }>>(raw, 'array')
-  } catch {
-    const repaired = await repairJsonWithModel(groq, raw, 'array', 900)
-    parsed = parseJsonCandidate<Array<{
-      type: string
-      title: string
-      detail: string
-      say?: string
-      why_now?: string
-      listen_for?: string
-    }>>(repaired, 'array')
-  }
-
-  const transcript = scenario.transcript.map((chunk) => ({ timestamp: chunk.timestamp, text: chunk.text }))
-  const meetingState = deriveEvalMeetingState(transcript, scenario.meetingContext)
-
-  const candidates = sanitizeSuggestions(
-    parsed.slice(0, 7).map((item) => ({
-      type: normalizeType(item.type ?? ''),
-      title: (item.title ?? '').trim(),
-      detail: (item.detail ?? '').trim(),
-      say: (item.say ?? '').trim() || undefined,
-      whyNow: (item.why_now ?? '').trim() || undefined,
-      listenFor: (item.listen_for ?? '').trim() || undefined,
-    }))
-  )
-
-  let suggestions = rankSuggestions(candidates, transcript, scenario.meetingContext, meetingState)
-  for (const fallback of buildFallbackSuggestions(transcript)) {
-    if (suggestions.length >= 3) break
-    if (isSemanticDuplicate(fallback, suggestions)) continue
-    suggestions.push(fallback)
-  }
-
-  return suggestions.slice(0, 3)
-}
-
-async function generateDetailedAnswer(groq: Groq, prompts: PromptBundle, scenario: Scenario, suggestion: Suggestion): Promise<string> {
-  const override = buildMultilingualDetailOverride(scenario, suggestion.type)
-  if (override) return override
-
-  const prompt = interpolate(
-    prompts.clickDetailPrompt
-      .replace('{suggestion_title}', suggestion.title)
-      .replace('{suggestion_type}', suggestion.type)
-      .replace('{suggestion_detail}', suggestion.detail),
-    scenario
-  )
-
-  const response = await callGroqWithRetry(groq, {
-    model: 'openai/gpt-oss-120b',
-    messages: [
-      { role: 'system', content: RESPONSE_GUARDRAILS },
-      { role: 'user', content: prompt },
-    ],
-    temperature: 0.3,
-    max_tokens: 1200,
-  })
-
-  return (response.choices[0]?.message?.content ?? '').trim()
+async function generateDetailedAnswer(apiKey: string, scenario: Scenario, suggestion: Suggestion): Promise<string> {
+  const transcript = toRuntimeTranscript(scenario.transcript)
+  return collectStream(streamDetailedAnswer(
+    suggestion.title,
+    suggestion.type,
+    suggestion.detail,
+    suggestion.say,
+    suggestion.whyNow,
+    suggestion.listenFor,
+    transcript,
+    apiKey,
+    DEFAULT_SETTINGS,
+    scenario.meetingContext
+  ))
 }
 
 async function judgeJson<T>(groq: Groq, prompt: string): Promise<T> {
@@ -983,11 +402,11 @@ function normalizeScore(value: number | undefined): number | undefined {
 
 async function evaluateScenario(
   groq: Groq,
-  prompts: PromptBundle,
+  apiKey: string,
   scenario: Scenario,
   mode: string
 ): Promise<EvalResult> {
-  const suggestions = await generateSuggestions(groq, prompts, scenario)
+  const suggestions = await generateSuggestions(apiKey, scenario)
 
   const suggestionJudgement = mode === 'detail'
     ? null
@@ -1008,7 +427,7 @@ async function evaluateScenario(
   } | null = null
 
   if ((mode === 'all' || mode === 'detail') && suggestions[0]) {
-    const answer = await generateDetailedAnswer(groq, prompts, scenario, suggestions[0])
+    const answer = await generateDetailedAnswer(apiKey, scenario, suggestions[0])
     detailJudgement = await judgeJson(groq, buildDetailJudgePrompt(scenario, suggestions[0], answer))
   }
 
@@ -1091,7 +510,6 @@ async function main() {
   const apiKey = process.env.GROQ_API_KEY
   if (!apiKey) throw new Error('Set GROQ_API_KEY before running prompt evaluation.')
 
-  const prompts = await loadPromptBundle()
   const groq = new Groq({ apiKey })
 
   // Load any previously saved results so incremental runs accumulate
@@ -1113,7 +531,7 @@ async function main() {
 
   for (const scenario of pending) {
     console.log(`Evaluating ${scenario.id}...`)
-    results.push(await evaluateScenario(groq, prompts, scenario, mode))
+    results.push(await evaluateScenario(groq, apiKey, scenario, mode))
     await persistResults(results, mode, fixture)
   }
 
