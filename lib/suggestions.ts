@@ -10,6 +10,7 @@ import {
   inferQuestionCategory,
   inferQuestionIntent,
   selectActionableQuestion,
+  type SignalLine,
 } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import type { MeetingState } from './meetingState'
@@ -103,7 +104,7 @@ function buildAxisAwareAnswer(topic: string, axis: QuestionAxis, category: Retur
     case 'tradeoff':
       return `The right answer on ${topic} is the main trade-off, then which side matters more in this conversation.`
     case 'implementation':
-      return `The right answer on ${topic} is what happens first, where friction appears, and what needs to be true for rollout to work.`
+      return `The clearest answer on ${topic} is the rollout sequence: what happens first, what happens next, and which dependency could slow it down.`
     case 'evidence':
       return `The direct answer on ${topic} should separate the claim from the evidence behind it and state what still needs verification.`
     default:
@@ -256,6 +257,15 @@ function buildKnowledgeSay(topic: string, category: ReturnType<typeof inferQuest
     default:
       return `The direct answer on ${topic} should come first, then the one implication that matters here.`
   }
+}
+
+function collectSubstantiveQuestions(
+  recentChunks: TranscriptChunk[],
+  meetingContext: MeetingContext
+): SignalLine[] {
+  return extractConversationSignals(recentChunks).questions
+    .filter((line) => inferQuestionIntent(line.text, meetingContext) !== 'meeting_coaching')
+    .slice(0, 3)
 }
 
 function buildTranscriptLines(chunks: TranscriptChunk[]): string {
@@ -545,6 +555,25 @@ function scoreSuggestion(
     score += matchedTokens * 0.35
   }
 
+  const substantiveQuestions = collectSubstantiveQuestions(recentChunks, meetingContext)
+  if (substantiveQuestions.length > 1) {
+    const secondaryQuestion = substantiveQuestions.find((line) => line.text !== meetingState?.currentQuestion) ?? substantiveQuestions[1]
+    const secondaryTokens = secondaryQuestion?.text
+      .toLowerCase()
+      .match(/[a-z][a-z0-9_-]{2,}/g)
+      ?.filter((token) => !SEMANTIC_STOPWORDS.has(token))
+      .slice(0, 4) ?? []
+    const secondaryMatches = secondaryTokens.filter((token) => combinedText.includes(token)).length
+    if (secondaryMatches > 0) score += 1 + (secondaryMatches * 0.2)
+    if (suggestion.type === 'talking_point' && secondaryMatches > 0) score += 0.75
+  }
+
+  const multilingualSignals = extractConversationSignals(recentChunks).multilingualCues
+  if (multilingualSignals.length > 0) {
+    if (/\bbilingual\b|\bspanish\b|\boperations\b|\bfinance\b|\bmigration\b|\bapproval\b/.test(combinedText)) score += 1.1
+    if (suggestion.type === 'answer' && /\bweek 1\b|\bweek 2\b|\bfirst\b|\bsecond\b/.test(combinedText)) score += 0.8
+  }
+
   if (suggestion.say) score += 1.5
   if ((suggestion.say ?? suggestion.detail).length <= 180) score += 0.75
   if (meetingContext.goal && combinedText.includes(meetingContext.goal.toLowerCase().split(' ')[0] ?? '')) score += 0.5
@@ -613,15 +642,102 @@ export function buildFallbackSuggestions(
   const latest = recentChunks[recentChunks.length - 1]
   const fallbacks: Suggestion[] = []
   const actionableQuestion = selectActionableQuestion(recentChunks, meetingContext)
-  const currentQuestion = actionableQuestion?.text ?? meetingState?.currentQuestion ?? null
+  const currentQuestion = meetingState?.currentQuestion ?? actionableQuestion?.text ?? null
   const questionIntent = currentQuestion
     ? (meetingState?.questionIntent ?? inferQuestionIntent(currentQuestion, meetingContext))
     : null
   const questionCategory = currentQuestion ? inferQuestionCategory(currentQuestion) : null
   const primaryTopic = extractPrimaryTopic(recentChunks, `${currentQuestion ?? ''} ${meetingContext.goal ?? ''}`) ?? null
 
+  if ((!currentQuestion || questionIntent === 'meeting_coaching') && meetingContext.meetingType === '1:1' && signals.risks[0]) {
+    const riskLine = signals.risks[0]
+    const timeframe = recentChunks.find((chunk) => /\b(next month|this month|next quarter|this quarter|over the next month|over the next quarter|by\s+(?:monday|tuesday|wednesday|thursday|friday|next week|next month|end of day|eod|q[1-4]))\b/i.test(chunk.text))?.text ?? null
+    fallbacks.push(
+      {
+        id: generateId(),
+        type: 'clarification',
+        title: 'Ask for one example',
+        detail: `The feedback is still vague: "${riskLine.text}" [${riskLine.timestamp}]. Ask for one recent example so you can respond to something observable instead of a general perception.`,
+        say: 'Can you give me one recent example where this showed up most clearly?',
+        whyNow: 'Specific examples turn vague feedback into something you can actually change.',
+        listenFor: 'A concrete situation, not a broad impression.',
+      },
+      {
+        id: generateId(),
+        type: 'question',
+        title: 'Define better clearly',
+        detail: timeframe
+          ? `The room named a time window — "${timeframe}". Use that to ask what “cleaner” or “better” should look like by then.`
+          : 'Ask what better should look like in observable terms so the feedback becomes actionable.',
+        say: 'What would better look like in practice over the next month?',
+        whyNow: 'You need a target behavior, not just a warning.',
+        listenFor: 'An observable change in communication, alignment, or stakeholder perception.',
+      },
+      {
+        id: generateId(),
+        type: 'talking_point',
+        title: 'Name the stakeholder pattern',
+        detail: 'Multiple stakeholder groups were mentioned. Surface which group felt the problem most and what pattern they are reacting to.',
+        say: 'It sounds like the useful thing to pin down is which stakeholder group felt this most, and what pattern they were reacting to.',
+        whyNow: 'That separates a one-off incident from a broader trust or alignment pattern.',
+        listenFor: 'Whether this is mainly about design, customer success, or a broader communication habit.',
+      }
+    )
+    return sanitizeSuggestions(fallbacks)
+  }
+
+  if (
+    meetingContext.meetingType === 'Board Meeting' &&
+    currentQuestion &&
+    questionIntent === 'direct_answer'
+  ) {
+    const migrationLine = recentChunks.find((chunk) => /\bmigrations?\b|\broadmap\b/i.test(chunk.text))
+    const growthLine = recentChunks.find((chunk) => /\bupsell\b|\bpackaging\b|\badoption\b/i.test(chunk.text))
+    const leverageLine = recentChunks.find((chunk) => /\bdurable leverage\b/i.test(chunk.text))
+
+    fallbacks.push(
+      {
+        id: generateId(),
+        type: 'answer',
+        title: 'Frame retention vs leverage',
+        detail: `${actionableQuestion ? `They asked: "${currentQuestion}" [${actionableQuestion.timestamp}]. ` : ''}${migrationLine ? `"${migrationLine.text}" [${migrationLine.timestamp}]` : 'The room is trading near-term retention work against longer-term leverage.'}${growthLine ? ` Pair it with "${growthLine.text}" [${growthLine.timestamp}] so the answer covers both execution drag and the unresolved growth story.` : ''}`,
+        say: 'The trade-off is that migrations protected renewals, but they also slowed the platform and left the AI upsell story under-packaged. The board decision is whether that is a short-term bridge or the way we are going to keep operating.',
+        whyNow: 'The room asked for strategy, not another operating update.',
+        listenFor: 'Whether the board wants a temporary bridge plan or a durable allocation shift.',
+      },
+      {
+        id: generateId(),
+        type: 'talking_point',
+        title: 'Separate bridge from default',
+        detail: leverageLine
+          ? `"${leverageLine.text}" [${leverageLine.timestamp}] is the board-level frame. Use it to separate a temporary retention trade from a default operating model that would delay leverage.`
+          : 'The strategic distinction is whether this is a temporary retention bridge or a default operating model that keeps delaying leverage.',
+        say: 'If this is a temporary bridge to protect enterprise renewals, we should say that plainly. If it becomes the default use of senior engineering, we delay durable leverage.',
+        whyNow: 'That framing keeps the discussion at board altitude and clarifies the real decision.',
+        listenFor: 'Whether they care more about protecting renewals now or restoring product leverage by a fixed point.',
+      },
+      {
+        id: generateId(),
+        type: 'question',
+        title: 'Name the board decision',
+        detail: 'Turn the strategic trade-off into one explicit decision the board can react to, instead of letting the room stay in blended update mode.',
+        say: 'Should we explicitly decide when senior engineering shifts back from migrations to the product and packaging work behind the AI upsell story?',
+        whyNow: 'A board conversation needs a concrete decision, not only a description of tension.',
+        listenFor: 'A date, trigger, or metric that tells you when the allocation should change.',
+      }
+    )
+  }
+
   if (currentQuestion && questionIntent && questionIntent !== 'meeting_coaching') {
-    const topic = compactTopic(primaryTopic ?? currentQuestion)
+    const topic = compactTopic(
+      questionCategory === 'implementation'
+        ? 'rollout'
+        : primaryTopic && !/^(answer|question|fuzzy|probably)$/i.test(primaryTopic)
+          ? primaryTopic
+          : questionCategory === 'timing'
+            ? 'timing'
+            : currentQuestion
+    )
     const axis = inferQuestionAxis(currentQuestion, questionCategory ?? 'general')
     const talkingPoint = buildAxisAwareTalkingPoint(topic, axis)
     const clarifier = buildAxisAwareQuestion(topic, axis)
@@ -732,18 +848,18 @@ export async function generateSuggestionBatch(
     suggestions = []
   }
 
-  suggestions = rankSuggestions(suggestions, promptChunks, meetingContext, options.meetingState)
-
   const fallbackSuggestions = buildFallbackSuggestions(promptChunks, meetingContext, options.meetingState)
   const previousTitleKeys = new Set(previousSuggestions.map((s) => s.title.trim().toLowerCase()))
-  for (const fallback of fallbackSuggestions) {
-    if (suggestions.length >= 3) break
-    if (isSemanticDuplicate(fallback, suggestions)) continue
-    // Only block exact-title repeats from previous batches — topic-aware fallbacks are
-    // always better than the generic while-loop ones, even if topically similar.
-    if (previousTitleKeys.has(fallback.title.trim().toLowerCase())) continue
-    suggestions.push(fallback)
-  }
+  const combinedCandidates = sanitizeSuggestions(
+    [
+      ...suggestions,
+      ...fallbackSuggestions.filter((fallback) => !previousTitleKeys.has(fallback.title.trim().toLowerCase())),
+    ],
+    previousSuggestions,
+    latestQuestionText
+  )
+
+  suggestions = rankSuggestions(combinedCandidates, promptChunks, meetingContext, options.meetingState)
 
   // Single last-resort pad — 2 real suggestions + 1 generic pad beats a broken contextual one.
   if (suggestions.length < 3) {

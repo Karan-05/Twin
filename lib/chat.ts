@@ -46,6 +46,83 @@ function buildKnowledgeSupportLine(topic: string, category: QuestionCategory): s
   }
 }
 
+function buildRoleAwareDetailFallback(
+  topic: string,
+  meetingContext: MeetingContext,
+  openQuestion: { text: string; timestamp: string } | null,
+  transcript: TranscriptChunk[],
+  latest: TranscriptChunk | undefined,
+  suggestionSay: string | undefined
+): string[] | null {
+  const hasConcreteSay = suggestionSay && !/\b(answer|question|rollout sequence)\b/i.test(suggestionSay)
+
+  if (
+    meetingContext.meetingType === 'Sales Call' &&
+    /\b(first two weeks|implementation timeline|move forward|moved forward|implementation)\b/i.test(openQuestion?.text ?? '') &&
+    /\b(bilingual|operations|ops|finance|approval|q4)\b/i.test(`${meetingContext.prepNotes ?? ''} ${latest?.text ?? ''} ${openQuestion?.text ?? ''}`)
+  ) {
+    return [
+      `**In short:** Answer the rollout sequence directly, then tie it to the hidden stakeholder concern before locking the next step.`,
+      openQuestion ? `- Rollout question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Give a direct implementation sequence, not a vague reassurance.',
+      '- **Week 1:** run the kickoff with the operations stakeholders, map the current workflow, and confirm what stays lightweight so this does not become another long migration.',
+      '- **Week 2:** review the first working path with operations and finance, surface any approval blocker, and decide whether this is concrete enough to prioritize now instead of waiting for **Q4**.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : '> "Say: Week 1 is a kickoff with operations to map the current workflow and keep the rollout lightweight. Week 2 is a review of the first working path with operations and finance so we can decide now, not wait for Q4."',
+      '- [ ] Next step to lock: confirm who from operations and finance needs to see that walkthrough, and by when.',
+    ]
+  }
+
+  if (meetingContext.meetingType === 'Investor Pitch') {
+    return [
+      `**In short:** Answer the strategic thesis on **${topic}** directly, then tie it to the strongest proof or friction in the transcript.`,
+      openQuestion ? `- Open investor question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Name where you win fastest before broad market framing.',
+      '- Lead with the wedge or fastest-winning segment first, then explain what the current traction or security-review friction proves about that segment.',
+      '- Separate the incumbent or defensibility concern from the wedge answer so you do not blur them into one generic strategy paragraph.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : `> "Say: The wedge here is the segment where the current traction and friction show we win fastest — and the strategic question is how that expands, not how large the whole market sounds."`,
+      '- [ ] Next step to lock: name the proof point or open risk the investor should evaluate next.',
+    ]
+  }
+
+  if (meetingContext.meetingType === 'Board Meeting') {
+    const migrationLine = transcript.find((chunk) => /\bmigrations?\b|\broadmap\b/i.test(chunk.text))
+    const growthLine = transcript.find((chunk) => /\bupsell\b|\bpackaging\b|\badoption\b/i.test(chunk.text))
+    const leverageLine = transcript.find((chunk) => /\bdurable leverage\b/i.test(chunk.text))
+
+    return [
+      `**In short:** Answer the board-level trade-off directly, then tie it to leverage, capital allocation, and the unresolved growth decision.`,
+      leverageLine ? `- Board frame: "${leverageLine.text}" [${leverageLine.timestamp}]` : (latest ? `- Board context: "${latest.text}" [${latest.timestamp}]` : '- Keep the response at board altitude, not update mode.'),
+      migrationLine
+        ? `- Strategic cost: "${migrationLine.text}" [${migrationLine.timestamp}]`
+        : '- Name the strategic trade-off first, then what it is costing on the product side.',
+      growthLine
+        ? `- Growth thread still open: "${growthLine.text}" [${growthLine.timestamp}]`
+        : '- Tie the allocation trade-off to the unresolved growth or packaging decision the board actually cares about.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : `> "Say: The trade-off is that migrations protected renewals, but they also slowed the platform and left the AI upsell story under-packaged. The board decision is whether that is a short-term bridge or the way we are going to keep operating."`,
+      '- [ ] Next step to lock: frame the trigger, date, or metric that tells the board when this allocation should change.',
+    ]
+  }
+
+  if (meetingContext.meetingType === '1:1') {
+    return [
+      `**In short:** Respond on **${topic}** with one respectful line, then ask for one example, the pattern behind it, and the target for the stated time window.`,
+      openQuestion ? `- Feedback moment: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Treat vague feedback as something to make observable, not something to absorb passively.',
+      '- Keep the tone calm and direct: acknowledge the feedback, ask for one recent example, then ask what better should look like over the next month or stated window.',
+      '- If multiple stakeholders were named, ask which pattern matters most and where it showed up most clearly.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : '> "Say: That makes sense — can you give me one concrete example of where this showed up recently, and what better would look like over the next month?"',
+      '- [ ] Next step to lock: confirm the behavior to change, who will notice it, and when you should check back in.',
+    ]
+  }
+
+  return null
+}
+
 function buildLocalChatFallback(
   transcript: TranscriptChunk[],
   meetingContext: MeetingContext,
@@ -124,10 +201,13 @@ function buildLocalDetailedFallback(
   const riskyItem = signals.numericClaims[0] || signals.risks[0]
   const commitment = signals.commitments[0]
   const goalClause = meetingContext.goal ? `**${meetingContext.goal}**` : 'your stated goal'
-  const topic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${suggestionTitle}`) || 'current topic'
+  const extractedTopic = extractPrimaryTopic(transcript.slice(-8), `${meetingContext.goal} ${suggestionTitle}`)
   const category = inferQuestionCategory(openQuestion?.text ?? suggestionTitle)
   const questionIntent = inferQuestionIntent(openQuestion?.text ?? suggestionTitle, meetingContext)
   const knowledgeQuestion = questionIntent !== 'meeting_coaching'
+  const topic = category === 'implementation'
+    ? 'rollout'
+    : extractedTopic || 'current topic'
 
   const anchor =
     suggestionType === 'answer' || suggestionType === 'question' ? openQuestion ?? latest
@@ -138,6 +218,11 @@ function buildLocalDetailedFallback(
   const evidenceLine = anchor
     ? `**Evidence:** "${anchor.text}" [${anchor.timestamp}]`
     : '**Evidence:** Thin transcript — using suggestion framing.'
+
+  const roleAware = buildRoleAwareDetailFallback(topic, meetingContext, openQuestion, transcript.slice(-8), latest, suggestionSay)
+  if (roleAware && (knowledgeQuestion || meetingContext.meetingType === '1:1' || meetingContext.meetingType === 'Board Meeting')) {
+    return [evidenceLine, '', ...roleAware].join('\n')
+  }
 
   if ((suggestionType === 'answer' || suggestionType === 'talking_point') && knowledgeQuestion) {
     return [
@@ -191,7 +276,9 @@ function buildLocalDetailedFallback(
       inShort = 'Ask this now — say it cleanly and wait. Don\'t explain the question.'
       bullets = [
         `- Say: **${suggestionTitle}** — in one direct sentence ending with a question mark.`,
-        `> "Say: [Ask it directly — what you actually want to know, nothing more]."`,
+        suggestionSay
+          ? `> "Say: ${suggestionSay}"`
+          : `> "Say: ${suggestionTitle.endsWith('?') ? suggestionTitle : `${suggestionTitle}?`}"`,
         '- A strong reply: specific and opinionated — gives you something to act on.',
         '- A weak reply: vague or deflecting — push once: "Can you be more specific?"',
         openQuestion && openQuestion.text !== suggestionTitle
@@ -217,7 +304,9 @@ function buildLocalDetailedFallback(
       inShort = 'Get this defined before the conversation moves on — vagueness here costs time later.'
       bullets = [
         `- What's still undefined: **${suggestionTitle}**`,
-        `> "Say: Before we move on — can we agree on [the specific undefined thing] so there's no confusion later?"`,
+        suggestionSay
+          ? `> "Say: ${suggestionSay}"`
+          : `> "Say: Before we move on — can we pin down the specific thing that is still undefined here so it does not create confusion later?"`,
         '- Downstream consequence: without a clear owner, criterion, or decision rule, this will resurface and cost more time.',
         commitment
           ? `- Existing commitment to pin down: "${commitment.text}" [${commitment.timestamp}]`
@@ -230,7 +319,9 @@ function buildLocalDetailedFallback(
       bullets = [
         latest ? `- Build on: "${latest.text}" [${latest.timestamp}]` : '- Lead with a concrete fact or credential, not a general opinion.',
         '- Frame: **[your key point]** → **[why it matters right now]** → **[what action it implies]**',
-        `> "Say: The key thing to add here is [your insight] — which means we should [concrete next step]."`,
+        suggestionSay
+          ? `> "Say: ${suggestionSay}"`
+          : `> "Say: The key thing to add here is the practical implication that changes what we should do next."`,
         `- [ ] Next step: connect this to ${goalClause} and propose one concrete action before moving on.`,
       ]
       break

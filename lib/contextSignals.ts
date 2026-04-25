@@ -74,6 +74,7 @@ const LOW_VALUE_TOPIC_WORDS = new Set([
   'latest', 'topic', 'topics', 'conversation', 'conversations', 'discussion', 'discuss',
   'existence', 'everything', 'something', 'stuff', 'things', 'awesome', 'important',
   'process', 'system', 'architecture',
+  'answer', 'question', 'fuzzy', 'probably',
 ])
 
 const KNOWN_TECH_TERMS: Array<[RegExp, string]> = [
@@ -92,6 +93,8 @@ const KNOWN_TECH_TERMS: Array<[RegExp, string]> = [
 ]
 
 const QUESTION_TOPIC_PATTERNS = [
+  /\b(?:what have you .*?learned about|what did you learn about|what have you learned about)\s+(.+?)(?:[?.,]|$)/i,
+  /\b(?:how should we think about)\s+(.+?)(?:[?.,]|$)/i,
   /\bhow\s+(.+?)\s+works?\b/i,
   /\b(?:what is|what's|how does|how do|explain|walk me through|tell me about|talk about|discuss(?:ing)?)\s+(.+?)(?:[?.,]|$)/i,
 ]
@@ -100,11 +103,12 @@ const LOW_SIGNAL_CHECKIN_PATTERN = /\b(would you like to know more|does that mak
 const LOW_SIGNAL_SOCIAL_PATTERN = /\b(how are you|how's it going|what's up|where are you (?:living|staying|based|located)|where do you live|brother|thank you)\b/i
 const PROBING_PROMPT_PATTERN = /^(?:(?:can|could)\s+you\s+share\b.*\b(?:how many|which|what|who)\b|would you like\b|do you want\b|how would you want\b|what would you like\b|anything special\b|is there anything\b|can we\b|should we\b|which matters most\b|what matters most\b)/i
 const EXPERIENCE_QUESTION_PATTERN = /\b(?:tell me about|walk me through|can you share|could you share|describe)\b.*\b(?:a time|an example|experience|project|situation|instance|decision|conflict|challenge|failure|mistake)\b/i
+const DIRECT_EXPLAIN_REQUEST_PATTERN = /\b(?:can|could)\s+you\s+(?:tell|walk|talk|run|show)\s+me\b/i
 const ANSWERISH_SENTENCE_PATTERN = /^(?:yes|yeah|yep|no|nope|i\b|we\b|they\b|about\b|around\b|roughly\b|approximately\b|tens?\b|a few\b|not really\b|i don't think so\b|that works\b|sounds good\b|fine\b|okay\b)/i
 const DEEP_TECH_SIGNAL_PATTERN = /\b(tokenization|tokenisation|embedding|embeddings|transformer|attention|next token|inference|latency|throughput|architecture|pipeline|security|api|integration|model|scal(?:e|ing)|hallucinat)\b/i
 const SHALLOW_TECH_PATTERN = /\bhow (does|do|can|to)\b.*\b(work|works|system|platform|agent|pipeline|integration|architecture|api|security|model)\b/i
 const DIRECT_KNOWLEDGE_PATTERN = /\b(what is|what's|where is|where are|who is|who are|when is|when did|why does|why do|how does|how do|how can|how to|define|explain|tell me about|walk me through|difference between|compare|versus|vs|meaning of)\b/i
-const MEETING_CONTROL_PATTERN = /\b(who owns|owner|by when|next step|before we wrap|can you be more specific|what should we do|should we|do we want to|what do you think|what would make|how should we think about|would you like to know more|does that make sense|sound good|what workflow matters|who else will weigh in)\b/i
+const MEETING_CONTROL_PATTERN = /\b(who owns|owner|by when|next step|before we wrap|can you be more specific|what should we do|should we|do we want to|what do you think|what would make|would you like to know more|does that make sense|sound good|what workflow matters|who else will weigh in)\b/i
 const DOMAIN_KNOWLEDGE_PATTERN = /\b(what kind of|what does .* do|who is .* for|how is .* used|use case|workflow|configuration|configurations|pricing|plan|tier|sku|edition|package|feature set|capabilities|model|ram|storage|gpu|specs?|delivery|shipping|lead time|customization|software)\b/i
 const PARTICIPANT_ANSWER_PATTERN = /\b(can you|could you|would you|why did you|how did you|what did you|where did you|when did you|who did you)\b/i
 const SHORT_BINARY_CHECK_PATTERN = /^(?:is it|is that|are they|are there)\b/i
@@ -114,7 +118,10 @@ function cleanText(text: string): string {
 }
 
 function stripQuestionLeadIn(text: string): string {
-  return cleanText(text).replace(/^(?:(?:so|hey|well|um|uh|and|but|also|okay|right|yeah|now|like|alright|actually|basically)\s+){1,3}/i, '').trim()
+  return cleanText(text)
+    .replace(/^(?:sorry to interrupt(?:\s*[—-]\s*|\s+)|let me ask(?:\s*[—-]\s*|\s+))/i, '')
+    .replace(/^(?:(?:so|hey|well|um|uh|and|but|also|okay|right|yeah|now|like|alright|actually|basically)\s+){1,3}/i, '')
+    .trim()
 }
 
 function isLowSignalSocialText(text: string): boolean {
@@ -335,10 +342,10 @@ export function inferQuestionCategory(text: string): QuestionCategory {
   if (/\bwho is\b|\bwho are\b|\bwhose\b/.test(lower)) return 'person'
   if (/^when\b|\bwhen is\b|\bwhen did\b|\bwhat year\b|\bwhat time\b|\bwhen does\b|\bwhen can\b|\bwhen will\b|\bwhen should\b/.test(lower)) return 'timing'
   if (/\bwhat is\b|\bwhat's\b|\bdefine\b|\bmeaning of\b/.test(lower)) return 'definition'
-  if (/\bhow does\b|\bhow do\b|\bhow can\b|\bhow to\b|\bworks?\b/.test(lower)) return 'mechanism'
-  if (/\bcompare\b|\bversus\b|\bvs\b|\bdifference\b|\bbetter than\b/.test(lower)) return 'comparison'
-  if (/\bwhy\b|\bimportance\b|\bmatter\b/.test(lower)) return 'reason'
   if (/\btradeoff\b|\btrade-off\b|\bpros and cons\b|\bdownside\b|\bupside\b/.test(lower)) return 'tradeoff'
+  if (/\bcompare\b|\bversus\b|\bvs\b|\bdifference\b|\bbetter than\b/.test(lower)) return 'comparison'
+  if (/\bhow does\b|\bhow do\b|\bhow can\b|\bhow to\b|\bhow .* work\b/.test(lower)) return 'mechanism'
+  if (/\bwhy\b|\bimportance\b|\bmatter\b/.test(lower)) return 'reason'
   if (/\bimplement\b|\bintegration\b|\brollout\b|\bonboarding\b|\bfirst two weeks\b/.test(lower)) return 'implementation'
   return 'general'
 }
@@ -348,12 +355,17 @@ export function inferQuestionIntent(
   context?: { meetingType?: string; userRole?: string }
 ): QuestionIntent {
   const lower = stripQuestionLeadIn(text).toLowerCase()
+  const category = inferQuestionCategory(text)
 
   if (LOW_SIGNAL_CHECKIN_PATTERN.test(lower)) return 'meeting_coaching'
   if (LOW_SIGNAL_SOCIAL_PATTERN.test(lower)) return 'meeting_coaching'
+  if (/\bhow should we think about\b/.test(lower) && (category === 'tradeoff' || category === 'reason' || category === 'comparison')) {
+    return 'direct_answer'
+  }
   if (MEETING_CONTROL_PATTERN.test(lower)) return 'meeting_coaching'
   if (PROBING_PROMPT_PATTERN.test(lower) && !EXPERIENCE_QUESTION_PATTERN.test(lower)) return 'meeting_coaching'
   if (EXPERIENCE_QUESTION_PATTERN.test(lower)) return 'direct_answer'
+  if (DIRECT_EXPLAIN_REQUEST_PATTERN.test(lower)) return 'direct_answer'
 
   if (DOMAIN_KNOWLEDGE_PATTERN.test(lower) && !DEEP_TECH_SIGNAL_PATTERN.test(lower) && !PARTICIPANT_ANSWER_PATTERN.test(lower)) {
     return 'domain_knowledge'
