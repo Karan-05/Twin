@@ -33,6 +33,16 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
+function hasSummaryData(summary: ReturnType<typeof useMeetingStore.getState>['intelligenceSummary']): boolean {
+  return Boolean(summary && (
+    summary.overview ||
+    summary.decisions.length > 0 ||
+    summary.actionItems.length > 0 ||
+    summary.keyData.length > 0 ||
+    summary.openQuestions.length > 0
+  ))
+}
+
 export default function IntelligenceStrip() {
   const {
     isRecording,
@@ -49,6 +59,7 @@ export default function IntelligenceStrip() {
 
   const [collapsed, setCollapsed] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const prevRecordingRef = useRef(isRecording)
   const transcriptRef = useRef(transcript)
   const apiKeyRef = useRef(apiKey)
   const meetingContextRef = useRef(meetingContext)
@@ -95,12 +106,16 @@ export default function IntelligenceStrip() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording])
 
-  const hasAnyData = intelligenceSummary && (
-    intelligenceSummary.decisions.length > 0 ||
-    intelligenceSummary.actionItems.length > 0 ||
-    intelligenceSummary.keyData.length > 0 ||
-    intelligenceSummary.openQuestions.length > 0
-  )
+  useEffect(() => {
+    const wasRecording = prevRecordingRef.current
+    prevRecordingRef.current = isRecording
+    if (wasRecording && !isRecording && transcript.length >= 2) {
+      void runExtraction()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecording, transcript.length])
+
+  const hasAnyData = hasSummaryData(intelligenceSummary)
 
   if (!isRecording && !hasAnyData) return null
 
@@ -129,7 +144,19 @@ export default function IntelligenceStrip() {
       </button>
 
       {!collapsed && hasAnyData && (
-        <div className="grid grid-cols-4 gap-0 border-t border-border">
+        <div className="border-t border-border">
+          {intelligenceSummary?.overview && (
+            <div className="px-4 py-3 border-b border-border bg-accent-bg/50">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-accent" />
+                <span className="text-[10px] font-semibold text-text-muted uppercase tracking-widest">
+                  Overview
+                </span>
+              </div>
+              <p className="text-xs text-text-secondary leading-snug">{intelligenceSummary.overview}</p>
+            </div>
+          )}
+          <div className="grid grid-cols-4 gap-0">
           {SECTION_CONFIG.map(({ key, label, dot }, idx) => {
             const items = intelligenceSummary?.[key] ?? []
             return (
@@ -159,6 +186,7 @@ export default function IntelligenceStrip() {
               </div>
             )
           })}
+          </div>
         </div>
       )}
     </div>

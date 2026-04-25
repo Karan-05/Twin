@@ -97,6 +97,9 @@ const STABLE_DOMAIN_TOPICS: Array<[RegExp, string]> = [
   [/\b(ram|gpu|cpu|storage|hardware specs?|specs?)\b/i, 'hardware specs'],
   [/\b(ship|shipping|deliver|delivery|lead time|this week|next week)\b/i, 'delivery timeline'],
   [/\b(battery|claim|confirm|source|tested)\b/i, 'claim basis'],
+  [/\b(onboarding|implementation|rollout)\b/i, 'onboarding speed'],
+  [/\b(root cause|what broke|repair)\b/i, 'root cause and owner'],
+  [/\b(owner|make the call|who owns|approval)\b/i, 'owner and decision'],
 ]
 
 const QUESTION_TOPIC_PATTERNS = [
@@ -118,7 +121,7 @@ const ANSWERISH_SENTENCE_PATTERN = /^(?:yes|yeah|yep|no|nope|i\b|we\b|they\b|abo
 const DEEP_TECH_SIGNAL_PATTERN = /\b(tokenization|tokenisation|embedding|embeddings|transformer|attention|next token|inference|latency|throughput|architecture|pipeline|security|api|integration|model|scal(?:e|ing)|hallucinat)\b/i
 const SHALLOW_TECH_PATTERN = /\bhow (does|do|can|to)\b.*\b(work|works|system|platform|agent|pipeline|integration|architecture|api|security|model)\b/i
 const DIRECT_KNOWLEDGE_PATTERN = /\b(what is|what's|where is|where are|who is|who are|when is|when did|why does|why do|how does|how do|how can|how to|define|explain|tell me about|walk me through|difference between|compare|versus|vs|meaning of)\b/i
-const MEETING_CONTROL_PATTERN = /\b(who owns|owner|by when|next step|before we wrap|can you be more specific|what should we do|should we|do we want to|what do you think|what would make|would you like to know more|does that make sense|sound good|what workflow matters|who else will weigh in)\b/i
+const MEETING_CONTROL_PATTERN = /\b(who owns|owner|who can .*make the call|make the call|by when|next step|before we wrap|can you be more specific|what should we do|should we|do we want to|what do you think|what would make|would you like to know more|does that make sense|sound good|what workflow matters|who else will weigh in|what actually broke|who owns the repair)\b/i
 const DOMAIN_KNOWLEDGE_PATTERN = /\b(what kind of|what does .* do|who is .* for|how is .* used|use case|workflow|configuration|configurations|pricing|price|billing|charges?|payment terms?|plan|tier|sku|edition|package|feature set|capabilities|model|ram|storage|gpu|cpu|specs?|hardware|delivery|shipping|lead time|customization|software|battery)\b/i
 const PARTICIPANT_ANSWER_PATTERN = /\b(can you|could you|would you|why did you|how did you|what did you|where did you|when did you|who did you)\b/i
 const SHORT_BINARY_CHECK_PATTERN = /^(?:is it|is that|are they|are there)\b/i
@@ -278,7 +281,7 @@ export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): strin
   const transcriptSources = chunks
     .map((chunk) => chunk.text)
     .filter((text) => !isLowSignalSocialText(text))
-  const prioritizedSources = [hint, ...questionTexts].filter(Boolean)
+  const prioritizedSources = [...questionTexts, hint].filter(Boolean)
   const fallbackSources = transcriptSources
 
   for (const source of prioritizedSources) {
@@ -341,6 +344,11 @@ export function selectActionableQuestion(
       const lower = normalized.toLowerCase()
       const category = inferQuestionCategory(normalized)
       const intent = inferQuestionIntent(normalized, context)
+      const meaningfulTokens = normalized
+        .toLowerCase()
+        .match(/[a-z][a-z0-9_-]{2,}/g)
+        ?.filter((token) => !STOPWORDS.has(token))
+        ?? []
       let score = 0
 
       if (!line.resolvedInChunk) score += 4
@@ -355,7 +363,9 @@ export function selectActionableQuestion(
 
       if (EXPERIENCE_QUESTION_PATTERN.test(lower)) score += 2
       if (DIRECT_KNOWLEDGE_PATTERN.test(lower)) score += 1.5
+      if (DEEP_TECH_SIGNAL_PATTERN.test(lower)) score += 2
       if (category !== 'general') score += 1
+      score += Math.min(2, meaningfulTokens.length * 0.12)
       if (SHORT_BINARY_CHECK_PATTERN.test(lower) && normalized.length <= 28 && category === 'general') score -= 1.5
 
       return { line, score }
@@ -402,6 +412,7 @@ export function inferQuestionIntent(
   if (PROBING_PROMPT_PATTERN.test(lower) && !EXPERIENCE_QUESTION_PATTERN.test(lower)) return 'meeting_coaching'
   if (EXPERIENCE_QUESTION_PATTERN.test(lower)) return 'direct_answer'
   if (DIRECT_EXPLAIN_REQUEST_PATTERN.test(lower)) return 'direct_answer'
+  if (/^(?:can|could)\s+you\s+explain\b/.test(lower) && /\byour\b/.test(lower)) return 'direct_answer'
 
   if (DOMAIN_KNOWLEDGE_PATTERN.test(lower) && !DEEP_TECH_SIGNAL_PATTERN.test(lower) && !PARTICIPANT_ANSWER_PATTERN.test(lower)) {
     return 'domain_knowledge'

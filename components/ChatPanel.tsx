@@ -1,11 +1,11 @@
 'use client'
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { Send, Trash2 } from 'lucide-react'
+import { Send, Trash2, Sparkles, Copy, Check } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import { streamChatResponse, streamDetailedAnswer } from '@/lib/chat'
 import { generateId, formatTimestamp } from '@/lib/utils'
 import { ErrorBoundary } from './ErrorBoundary'
-import type { Suggestion } from '@/lib/store'
+import type { Suggestion, IntelligenceSummary } from '@/lib/store'
 
 function TypingIndicator() {
   return (
@@ -236,6 +236,113 @@ function MarkdownMessage({ text, isUser, onTimestampClick }: { text: string; isU
   return <div className="space-y-0.5">{nodes}</div>
 }
 
+function hasSummaryData(summary: IntelligenceSummary | null): boolean {
+  return Boolean(summary && (
+    summary.overview ||
+    summary.decisions.length > 0 ||
+    summary.actionItems.length > 0 ||
+    summary.keyData.length > 0 ||
+    summary.openQuestions.length > 0
+  ))
+}
+
+function SummaryCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 text-[11px] text-text-faint hover:text-text-primary transition-colors"
+      aria-label="Copy conversation recap"
+    >
+      {copied ? <Check size={11} className="text-accent" /> : <Copy size={11} />}
+      {copied ? 'Copied' : 'Copy recap'}
+    </button>
+  )
+}
+
+function buildSummaryCopyText(summary: IntelligenceSummary): string {
+  const sections = [
+    summary.overview ? `Overview\n${summary.overview}` : '',
+    summary.decisions.length > 0 ? `Decisions\n${summary.decisions.map((item) => `- ${item}`).join('\n')}` : '',
+    summary.actionItems.length > 0 ? `Action Items\n${summary.actionItems.map((item) => `- ${item}`).join('\n')}` : '',
+    summary.keyData.length > 0 ? `Important Facts\n${summary.keyData.map((item) => `- ${item}`).join('\n')}` : '',
+    summary.openQuestions.length > 0 ? `Open Questions\n${summary.openQuestions.map((item) => `- ${item}`).join('\n')}` : '',
+  ].filter(Boolean)
+
+  return sections.join('\n\n')
+}
+
+function RecapCard({ summary }: { summary: IntelligenceSummary }) {
+  const summaryText = buildSummaryCopyText(summary)
+
+  return (
+    <div className="rounded-2xl border border-accent-border bg-accent-bg/60 px-4 py-3 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-full bg-accent-bg border border-accent-border flex items-center justify-center text-accent-dark">
+            <Sparkles size={13} />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-text-muted uppercase tracking-wider">Conversation Recap</p>
+            <p className="text-[11px] text-text-faint">Generated when recording stopped</p>
+          </div>
+        </div>
+        <SummaryCopyButton text={summaryText} />
+      </div>
+
+      {summary.overview && (
+        <div className="rounded-xl border border-accent-border bg-surface-primary px-3 py-2">
+          <p className="text-[10px] font-semibold text-text-muted uppercase tracking-widest mb-1">What This Was About</p>
+          <p className="text-sm text-text-secondary leading-relaxed">{summary.overview}</p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-3">
+        {summary.keyData.length > 0 && (
+          <div>
+            <p className="text-[10px] font-semibold text-text-muted uppercase tracking-widest mb-1.5">Important Facts</p>
+            <ul className="space-y-1">
+              {summary.keyData.map((item, i) => <li key={i} className="text-xs text-text-secondary leading-snug">- {item}</li>)}
+            </ul>
+          </div>
+        )}
+        {summary.decisions.length > 0 && (
+          <div>
+            <p className="text-[10px] font-semibold text-text-muted uppercase tracking-widest mb-1.5">Decisions</p>
+            <ul className="space-y-1">
+              {summary.decisions.map((item, i) => <li key={i} className="text-xs text-text-secondary leading-snug">- {item}</li>)}
+            </ul>
+          </div>
+        )}
+        {summary.actionItems.length > 0 && (
+          <div>
+            <p className="text-[10px] font-semibold text-text-muted uppercase tracking-widest mb-1.5">Action Items</p>
+            <ul className="space-y-1">
+              {summary.actionItems.map((item, i) => <li key={i} className="text-xs text-text-secondary leading-snug">- {item}</li>)}
+            </ul>
+          </div>
+        )}
+        {summary.openQuestions.length > 0 && (
+          <div>
+            <p className="text-[10px] font-semibold text-text-muted uppercase tracking-widest mb-1.5">Open Questions</p>
+            <ul className="space-y-1">
+              {summary.openQuestions.map((item, i) => <li key={i} className="text-xs text-text-secondary leading-snug">- {item}</li>)}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function ChatPanel() {
   const {
     messages,
@@ -249,6 +356,9 @@ export default function ChatPanel() {
     setIsStreamingChat,
     setFocusedChunkId,
     clearMessages,
+    intelligenceSummary,
+    isExtractingIntelligence,
+    isRecording,
   } = useMeetingStore()
 
   const transcriptRef = useRef(transcript)
@@ -384,9 +494,22 @@ export default function ChatPanel() {
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
+        {!isRecording && isExtractingIntelligence && !hasSummaryData(intelligenceSummary) && (
+          <div className="rounded-2xl border border-border bg-surface-secondary px-4 py-3">
+            <p className="text-sm font-medium text-text-primary">Building final conversation recap…</p>
+            <p className="text-xs text-text-faint mt-1">Capturing what the conversation was about, important facts, decisions, action items, and open questions.</p>
+          </div>
+        )}
+
+        {!isRecording && hasSummaryData(intelligenceSummary) && intelligenceSummary && (
+          <RecapCard summary={intelligenceSummary} />
+        )}
+
         {messages.length === 0 ? (
           <p className="text-text-faint text-xs text-center mt-12">
-            Ask questions about the meeting or click a suggestion to get details
+            {hasSummaryData(intelligenceSummary) && !isRecording
+              ? 'Ask follow-up questions about the recap or click a suggestion to get details'
+              : 'Ask questions about the meeting or click a suggestion to get details'}
           </p>
         ) : (
           messages.map((msg) => (

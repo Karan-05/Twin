@@ -2,7 +2,7 @@ import Groq from 'groq-sdk'
 import type { TranscriptChunk, IntelligenceSummary, MeetingContext } from './store'
 import { isGroqBudgetSkip, withGroqTextBudget } from './groqBudget'
 
-const EMPTY: IntelligenceSummary = { decisions: [], actionItems: [], keyData: [], openQuestions: [] }
+const EMPTY: IntelligenceSummary = { overview: null, decisions: [], actionItems: [], keyData: [], openQuestions: [] }
 
 // Meeting-type-specific extraction guidance — what "decision" or "action item" means varies by context.
 const MEETING_GUIDANCE: Record<string, string> = {
@@ -34,6 +34,7 @@ ${guidance}
 ${text}
 
 ## Output rules — strict
+- overview: One short sentence on what this conversation was mainly about and where it landed. No fluff.
 - decisions: Firm choices/commitments explicitly confirmed. Include who decided if named. NOT proposals or maybes.
 - actionItems: Concrete tasks. Format: "[Owner]: [task] by [deadline]" when names/dates are available. Owner = "TBD" if unclear.
 - keyData: Phone numbers, emails, LinkedIn/Instagram/social handles, physical addresses, URLs, names with titles, key numbers/prices/dates. Include [timestamp] if present. ≤15 words each.
@@ -42,7 +43,7 @@ ${text}
 - Empty arrays are correct when nothing of that type occurred.
 
 Return ONLY valid JSON, no markdown, no explanation:
-{"decisions":[],"actionItems":[],"keyData":[],"openQuestions":[]}`
+{"overview":null,"decisions":[],"actionItems":[],"keyData":[],"openQuestions":[]}`
 }
 
 const EXTRACTION_PERSONA = `You are a precision meeting analyst. Your only job is to extract factual, transcript-supported intelligence — no inference, no interpretation, no inventions. Every item you output must be directly evidenced by something explicitly said. When in doubt, omit.`
@@ -82,6 +83,9 @@ export async function extractIntelligenceSummary(
     const jsonStr = start !== -1 && end !== -1 ? cleaned.slice(start, end + 1) : cleaned
     const parsed = JSON.parse(jsonStr) as IntelligenceSummary
     return {
+      overview: typeof parsed.overview === 'string' && parsed.overview.trim()
+        ? parsed.overview.trim().slice(0, 180)
+        : null,
       decisions: Array.isArray(parsed.decisions) ? parsed.decisions.slice(0, 5) : [],
       actionItems: Array.isArray(parsed.actionItems) ? parsed.actionItems.slice(0, 5) : [],
       keyData: Array.isArray(parsed.keyData) ? parsed.keyData.slice(0, 5) : [],

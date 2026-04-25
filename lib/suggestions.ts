@@ -275,7 +275,7 @@ function buildKnowledgeSay(topic: string, category: ReturnType<typeof inferQuest
     case 'definition':
       return `${topic} should be answered by saying what it is first, then why it matters in practice.`
     case 'mechanism':
-      return `The clearest answer on ${topic} is the path from input to output, plus the main trade-off.`
+      return `Walk ${topic} as a sequence: what comes in, how the system transforms it, what comes out, and which trade-off shapes the real behavior.`
     case 'comparison':
       return `The cleanest answer on ${topic} is to compare it on one axis first — quality, cost, speed, or fit.`
     case 'reason':
@@ -686,6 +686,82 @@ export function buildFallbackSuggestions(
     : null
   const questionCategory = currentQuestion ? inferQuestionCategory(currentQuestion) : null
   const primaryTopic = extractPrimaryTopic(recentChunks, `${currentQuestion ?? ''} ${meetingContext.goal ?? ''}`) ?? null
+
+  if (
+    currentQuestion &&
+    questionIntent === 'meeting_coaching' &&
+    meetingContext.meetingType === 'Standup' &&
+    /\b(owner|make the call|blocked|blocker|dependency|slip|ship|qa|legal|security|approval)\b/i.test(currentQuestion)
+  ) {
+    fallbacks.push(
+      {
+        id: generateId(),
+        type: 'clarification',
+        title: 'Name the unblock owner',
+        detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Turn the blocker into one explicit owner question so the team knows who can make the call today.`,
+        say: 'Who can make the call on this today, and what is the fallback if they are unavailable?',
+        whyNow: 'A blocker without a decision owner becomes a slip by default.',
+        listenFor: 'A named owner and a same-day path forward.',
+      },
+      {
+        id: generateId(),
+        type: 'talking_point',
+        title: 'Separate workaround from decision',
+        detail: 'Do not wait for the perfect answer. Separate the permanent decision from the immediate workaround that keeps QA or shipping moving.',
+        say: 'We should separate the permanent decision from the immediate workaround so QA does not stall while we wait.',
+        whyNow: 'This keeps the standup action-oriented instead of becoming a circular status update.',
+        listenFor: 'Whether they can keep moving on a narrower path while the final call is pending.',
+      },
+      {
+        id: generateId(),
+        type: 'question',
+        title: 'Call out the slip risk',
+        detail: 'Tie the blocker to the actual delivery consequence so the room reacts to a concrete risk instead of a vague dependency.',
+        say: 'If nobody owns this today, what exactly slips and by when?',
+        whyNow: 'Naming the delivery consequence makes the unblock decision urgent and specific.',
+        listenFor: 'A date, milestone, or handoff that will move if this stays unresolved.',
+      }
+    )
+    return sanitizeSuggestions(fallbacks)
+  }
+
+  if (
+    currentQuestion &&
+    questionIntent === 'meeting_coaching' &&
+    meetingContext.meetingType === 'Team Review' &&
+    /\b(broke|repair|owner|handoff|root cause|communication)\b/i.test(currentQuestion)
+  ) {
+    fallbacks.push(
+      {
+        id: generateId(),
+        type: 'clarification',
+        title: 'Name what actually broke',
+        detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Force the room to name the failure mode itself instead of hiding behind broad labels like communication.`,
+        say: 'What exactly broke in the workflow or handoff, not just what the downstream symptom was?',
+        whyNow: 'Repair starts with one concrete failure mode, not a vague pattern label.',
+        listenFor: 'A specific handoff, decision gap, or process step that failed.',
+      },
+      {
+        id: generateId(),
+        type: 'question',
+        title: 'Assign the repair owner',
+        detail: 'Once the root issue is named, immediately ask who owns the repair so the review produces accountability instead of only diagnosis.',
+        say: 'Who owns the repair from here, and what do they need to change first?',
+        whyNow: 'A clean diagnosis still fails if nobody owns the fix.',
+        listenFor: 'One named owner and the first concrete change.',
+      },
+      {
+        id: generateId(),
+        type: 'talking_point',
+        title: 'Separate symptom from cause',
+        detail: 'Support noise, design confusion, and rollout pain can all be symptoms. The useful move is to distinguish the underlying coordination failure from the visible effects.',
+        say: 'The useful distinction here is the symptom versus the underlying coordination failure, because the repair owner depends on that difference.',
+        whyNow: 'That framing cuts through cross-talk and keeps the review from scattering across every symptom at once.',
+        listenFor: 'Whether the room agrees on the cause or is still mixing multiple issues together.',
+      }
+    )
+    return sanitizeSuggestions(fallbacks)
+  }
 
   if ((!currentQuestion || questionIntent === 'meeting_coaching') && meetingContext.meetingType === '1:1' && signals.risks[0]) {
     const riskLine = signals.risks[0]
