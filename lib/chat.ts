@@ -21,6 +21,44 @@ const DETAIL_CONTEXT_CHAR_BUDGET = 3600
 const CHAT_MAX_TOKENS = 700
 const DETAIL_MAX_TOKENS = 580
 
+function isWeakDetailedAnswer(
+  text: string,
+  suggestionType: string,
+  transcript: TranscriptChunk[],
+  meetingContext: MeetingContext
+): boolean {
+  const trimmed = text.trim()
+  if (!trimmed) return true
+  if (!/\*\*In short:\*\*/.test(trimmed)) return true
+  if (/(?:\n|\r)\s*[-:]\s*$/.test(trimmed) || /[:\-–]\s*$/.test(trimmed)) return true
+  if ((trimmed.match(/"/g)?.length ?? 0) % 2 === 1) return true
+
+  const minimumLength = suggestionType === 'answer' || suggestionType === 'talking_point' ? 220 : 150
+  if (trimmed.length < minimumLength) return true
+
+  const bulletCount =
+    (trimmed.match(/^\s*-\s/gm)?.length ?? 0) +
+    (trimmed.match(/^>\s*"Say:/gm)?.length ?? 0) +
+    (trimmed.match(/^\*\*Week [12]:\*\*/gm)?.length ?? 0)
+
+  if ((suggestionType === 'answer' || suggestionType === 'talking_point') && !/Say:/i.test(trimmed)) return true
+  if (bulletCount < (suggestionType === 'answer' || suggestionType === 'talking_point' ? 3 : 2)) return true
+
+  const joinedTranscript = transcript.map((chunk) => chunk.text).join(' ')
+  const needsPhasedPlan =
+    meetingContext.meetingType === 'Sales Call' &&
+    /\bfirst two weeks\b|\bimplementation timeline\b|\bmoved forward\b|\bmove forward\b/i.test(joinedTranscript) &&
+    /\boperations\b|\bfinance\b|\bq4\b|\bmigraci[oó]n\b|\bbilingual\b|sí\b/i.test(`${joinedTranscript} ${meetingContext.prepNotes ?? ''}`)
+
+  if (needsPhasedPlan) {
+    if (!/\bWeek\s*1\b/i.test(trimmed) || !/\bWeek\s*2\b/i.test(trimmed)) return true
+    if (!/\boperations\b/i.test(trimmed) || !/\bfinance\b/i.test(trimmed)) return true
+    if (!/Next step to lock/i.test(trimmed)) return true
+  }
+
+  return false
+}
+
 function buildKnowledgeSupportLine(topic: string, category: QuestionCategory): string {
   switch (category) {
     case 'location':
@@ -55,18 +93,69 @@ function buildRoleAwareDetailFallback(
   suggestionSay: string | undefined
 ): string[] | null {
   const hasConcreteSay = suggestionSay && !/\b(answer|question|rollout sequence)\b/i.test(suggestionSay)
+  const liveText = `${openQuestion?.text ?? ''} ${latest?.text ?? ''} ${meetingContext.goal ?? ''} ${meetingContext.prepNotes ?? ''}`
+
+  if (
+    meetingContext.meetingType === 'Standup' &&
+    /\b(blocked|blocker|owner|make the call|dependency|slip|ship|approve|approval|qa|legal|security|workaround)\b/i.test(liveText)
+  ) {
+    return [
+      `**In short:** Surface the blocker owner directly, then name the decision or workaround that keeps the work moving this week.`,
+      openQuestion ? `- Blocker question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Make the blocker concrete before the standup moves on.',
+      '- Name what is blocked, who can actually make the call, and what slips if nobody acts today.',
+      '- Separate the longer-term owner question from the immediate workaround so the team leaves with a path either way.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : '> "Say: The blocker is not just the task, it is the missing decision owner. We should name who can make the call today, and if that person is unavailable, agree on the workaround that keeps us moving this week."',
+      '- [ ] Next step to lock: owner, unblock action, and the date or check-in when the team will know this is cleared.',
+    ]
+  }
+
+  if (
+    meetingContext.meetingType === 'Team Review' &&
+    /\b(broke|broken|repair|owner|handoff|regression|incident|root cause|fix)\b/i.test(liveText)
+  ) {
+    return [
+      `**In short:** Turn the review into one clean repair answer: what broke, why it broke, who owns the fix, and how recurrence gets reduced.`,
+      openQuestion ? `- Repair question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Do not let the room blur cause, owner, and fix into one vague update.',
+      '- Start with the failure mode itself, then name the ownership gap or handoff problem that allowed it through.',
+      '- End with the concrete repair path and the one process change that should reduce recurrence next time.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : '> "Say: What broke was the handoff, not just the final output. The fix is to assign one owner for the repair now, and then tighten the review step that should have caught it earlier."',
+      '- [ ] Next step to lock: owner, repair deadline, and the review checkpoint that prevents the same class of failure.',
+    ]
+  }
+
+  if (
+    meetingContext.meetingType === 'Sales Call' &&
+    /\b(onboarding|rollout|implementation|faster than|faster|than the others|why your onboarding)\b/i.test(liveText)
+  ) {
+    return [
+      `**In short:** Answer the onboarding objection directly by naming why the rollout is faster, what the first value point is, and which dependency could still slow it down.`,
+      openQuestion ? `- Buyer objection: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- A speed objection needs a concrete rollout answer, not a generic reassurance.',
+      '- Lead with the reason the rollout is faster: fewer moving pieces, a narrower initial scope, or less custom integration work than the alternatives.',
+      '- Then say what the customer sees first, who needs to be involved, and which dependency would actually extend the timeline.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : '> "Say: Our onboarding is faster because we start with a narrower path to first value instead of a full custom rollout. The first milestone is a working setup with your core workflow, and the main thing that changes timing is how quickly we get the right stakeholder and data access lined up."',
+      '- [ ] Next step to lock: confirm the first workflow, required stakeholders, and the dependency that would decide the timeline.',
+    ]
+  }
 
   if (
     meetingContext.meetingType === 'Sales Call' &&
     /\b(first two weeks|implementation timeline|move forward|moved forward|implementation)\b/i.test(openQuestion?.text ?? '') &&
     /\b(bilingual|operations|ops|finance|approval|q4)\b/i.test(`${meetingContext.prepNotes ?? ''} ${latest?.text ?? ''} ${openQuestion?.text ?? ''}`)
   ) {
+    const rolloutSayIsConcrete = suggestionSay && /\bweek 1\b|\bweek 2\b|\boperations\b|\bfinance\b|\bq4\b/i.test(suggestionSay)
     return [
       `**In short:** Answer the rollout sequence directly, then tie it to the hidden stakeholder concern before locking the next step.`,
       openQuestion ? `- Rollout question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Give a direct implementation sequence, not a vague reassurance.',
+      '- Spanish concern to absorb: **operations** does not want another long migration this quarter, so keep the first phase explicitly lightweight.',
       '- **Week 1:** run the kickoff with the operations stakeholders, map the current workflow, and confirm what stays lightweight so this does not become another long migration.',
       '- **Week 2:** review the first working path with operations and finance, surface any approval blocker, and decide whether this is concrete enough to prioritize now instead of waiting for **Q4**.',
-      hasConcreteSay
+      rolloutSayIsConcrete
         ? `> "Say: ${suggestionSay}"`
         : '> "Say: Week 1 is a kickoff with operations to map the current workflow and keep the rollout lightweight. Week 2 is a review of the first working path with operations and finance so we can decide now, not wait for Q4."',
       '- [ ] Next step to lock: confirm who from operations and finance needs to see that walkthrough, and by when.',
@@ -117,6 +206,34 @@ function buildRoleAwareDetailFallback(
         ? `> "Say: ${suggestionSay}"`
         : '> "Say: That makes sense — can you give me one concrete example of where this showed up recently, and what better would look like over the next month?"',
       '- [ ] Next step to lock: confirm the behavior to change, who will notice it, and when you should check back in.',
+    ]
+  }
+
+  if (
+    /\bllm|large language model|transformer|tokenization|tokenisation|embedding|embeddings|attention|next token\b/i.test(liveText)
+  ) {
+    return [
+      `**In short:** Explain the system in order, then separate training from inference so the answer feels concrete instead of mystical.`,
+      openQuestion ? `- Technical question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Use a real sequence, not abstract AI marketing language.',
+      '- Walk it as a pipeline: text is tokenized, tokens are turned into embeddings with positional information, attention layers update those representations using surrounding context, and decoding produces one next token at a time.',
+      '- Then separate training from inference: training is where the weights learned statistical patterns, inference is the live pass where the model applies those learned weights to the current prompt.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : '> "Say: An LLM works in a sequence. It tokenizes the input, maps those tokens into embeddings, uses transformer attention to mix in context across the sequence, and then predicts the next token repeatedly until it completes the answer. Training is the earlier step that taught the model those weights; inference is the live step using them on your prompt."',
+      '- [ ] Next step to lock: ask whether they want the training loop, the attention mechanism, or the real-time serving stack next.',
+    ]
+  }
+
+  if (/\barchitecture|pipeline|workflow|integration|system|platform|agent\b/i.test(liveText)) {
+    return [
+      `**In short:** Explain the system as a concrete flow: input, core processing, output, and the main constraint that shapes real-world behavior.`,
+      openQuestion ? `- System question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Make the path legible before adding nuance.',
+      '- Start with what comes in, then what transforms it, then what the user or downstream system actually gets out.',
+      '- End with the bottleneck or trade-off that matters in practice: latency, accuracy, cost, reliability, or integration complexity.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : `> "Say: The clearest way to explain ${topic} is the flow from input to output, plus the main constraint that shapes the real trade-offs in production."`,
+      '- [ ] Next step to lock: ask whether they want the high-level flow, the bottleneck, or the implementation detail next.',
     ]
   }
 
@@ -220,7 +337,7 @@ function buildLocalDetailedFallback(
     : '**Evidence:** Thin transcript — using suggestion framing.'
 
   const roleAware = buildRoleAwareDetailFallback(topic, meetingContext, openQuestion, transcript.slice(-8), latest, suggestionSay)
-  if (roleAware && (knowledgeQuestion || meetingContext.meetingType === '1:1' || meetingContext.meetingType === 'Board Meeting')) {
+  if (roleAware) {
     return [evidenceLine, '', ...roleAware].join('\n')
   }
 
@@ -506,8 +623,17 @@ export async function* streamDetailedAnswer(
     return
   }
 
+  let fullResponse = ''
   for await (const chunk of stream) {
     const delta = chunk.choices[0]?.delta?.content
-    if (delta) yield delta
+    if (delta) fullResponse += delta
   }
+
+  if (isWeakDetailedAnswer(fullResponse, suggestionType, transcript, meetingContext)) {
+    console.warn('[streamDetailedAnswer] Groq returned weak/incomplete detail, using local fallback instead')
+    yield buildLocalDetailedFallback(suggestionTitle, suggestionType, suggestionDetail, suggestionSay, transcript, meetingContext)
+    return
+  }
+
+  yield fullResponse.trim()
 }

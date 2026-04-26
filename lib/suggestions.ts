@@ -14,18 +14,23 @@ import {
 } from './contextSignals'
 import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import type { MeetingState } from './meetingState'
-import { buildMeetingStateSection } from './meetingState'
+import { buildMeetingStateSection, deriveMeetingState } from './meetingState'
 import { withGroqTextBudget } from './groqBudget'
 
 const VALID_TYPES = new Set(['question', 'talking_point', 'answer', 'fact_check', 'clarification'])
 const OWNER_OR_TIMELINE_PATTERN = /\b(owner|who can|who owns|make the call|deadline|by when|tomorrow|friday|next step|follow up|escalat|workaround|qa|legal|security review|q[1-4])\b/i
-const SUGGESTION_MAX_TOKENS = 900
+const SUGGESTION_MAX_TOKENS = 1600
 
 
-// Meeting-type-aware guidance without domain-fixed few-shots
 const MEETING_PERSONAS: Record<string, string> = {
-  'Sales Call': 'You are a real-time commercial advisor. Help the participant answer direct buyer questions, surface hidden buying constraints, and turn vague interest into a concrete next move without drifting into a generic pitch.',
-  'Job Interview': 'You are a high-signal interview coach. Help the participant answer directly with specific evidence, clear structure, and one speakable opener line they can use immediately.',
+  'Sales Call': `You are a $200M sales veteran embedded with the participant. Your instinct when a buyer raises an objection is not to counter-pitch but to probe what is behind it: "What would it take to change that? Who made that decision last time?" You surface hidden blockers — budget chains, internal champions who went quiet, competing timelines — before they kill the deal late. You always move toward a specific next step with a named owner and a concrete date.
+
+Example: Buyer says "all our vendors work the same way." Wrong move: explain why this is different. Right move: "What would it take to change that — is it a budget call, a security review, or a process decision someone higher up owns?" That question exposes the real constraint without triggering defensiveness.`,
+  'Job Interview': `You are a FAANG engineering manager who has run 500+ interviews. For behavioral questions, you coach STAR: Situation (one sentence of context), Task (what was at stake for YOU specifically), Action (what YOU did — not "we," not luck), Result (a measurable or observable outcome). You never let "we" mask individual contribution.
+
+For technical questions, give the actual answer first — mechanism, failure mode, trade-off — before any meta-coaching. Do not advise on how to answer when the interviewer needs to hear real knowledge.
+
+Behavioral opener template: "At <Company>, we faced <situation>. My task was to <stake>. I <action>. The result was <metric or observable change>."`,
   'Investor Pitch': 'You are a rigorous strategic advisor. Keep answers grounded in evidence, sharpen assumptions, and convert broad claims into clear trade-offs, proof, or next decisions.',
   'Customer Discovery': 'You are a truth-seeking discovery coach. Surface pain, current behavior, ownership, urgency, and what is still only polite interest.',
   'Standup': 'You are a sharp delivery coach. Surface blockers, dependencies, owners, and what will slip if ambiguity remains unresolved.',
@@ -39,7 +44,10 @@ const DEFAULT_PERSONA = `You are a world-class real-time meeting strategist embe
 
 const STRICT_PREFIX = 'Output ONLY a valid JSON array. No markdown, no explanation, no preamble.\n\n'
 const GENERIC_TITLE_PATTERN = /^(what are the key next steps|next steps|follow up|clarify|ask a question|helpful suggestion)$/i
-const PLACEHOLDER_PATTERN = /\[[A-Za-z][^[\]]*\]|latest topic|current topic|your specific takeaway|next step\]|what matters most is(?:…|\.{3}|$)|the key point here is(?:…|\.{3}|$)|here'?s the direct answer(?:\s+on\s+[^:]+)?:?\s*(?:what matters most is)?(?:…|\.{3}|$)/i
+// Named placeholders are bad anywhere; bracket notation [like this] is only a problem in say fields
+// (technical content like [RDB], [AOF], [Company] legitimately appears in title/detail)
+const PLACEHOLDER_PATTERN = /latest topic|current topic|your specific takeaway|next step\]|what matters most is(?:…|\.{3}|$)|the key point here is(?:…|\.{3}|$)|here'?s the direct answer(?:\s+on\s+[^:]+)?:?\s*(?:what matters most is)?(?:…|\.{3}|$)/i
+const SAY_PLACEHOLDER_PATTERN = /\[[A-Za-z][^[\]]*\]/
 const SEMANTIC_STOPWORDS = new Set([
   'the', 'and', 'that', 'this', 'with', 'from', 'your', 'their', 'they', 'them', 'about', 'into',
   'what', 'when', 'where', 'which', 'would', 'could', 'should', 'will', 'just', 'really', 'very',
@@ -66,234 +74,6 @@ function normalizeType(raw: string): Suggestion['type'] {
   return VALID_TYPES.has(normalized) ? (normalized as Suggestion['type']) : 'question'
 }
 
-function compactTopic(topic?: string | null): string {
-  if (!topic) return 'this topic'
-  return topic.length > 28 ? `${topic.slice(0, 25).trimEnd()}…` : topic
-}
-
-type QuestionAxis =
-  | 'timing'
-  | 'scope'
-  | 'configuration'
-  | 'pricing'
-  | 'comparison'
-  | 'tradeoff'
-  | 'implementation'
-  | 'evidence'
-  | 'general'
-
-function inferQuestionAxis(text: string, category: ReturnType<typeof inferQuestionCategory>): QuestionAxis {
-  const lower = text.toLowerCase()
-  if (/\bwhen\b|\btimeline\b|\bdeadline\b|\blead time\b|\barrival\b|\bship|deliver|\bthis week\b|\bnext week\b/i.test(lower)) return 'timing'
-  if (/\bhow many\b|\bquantity\b|\bsize\b|\bscope\b|\bcount\b|\bnumber of\b/i.test(lower)) return 'scope'
-  if (/\bprice\b|\bpricing\b|\bbilling\b|\bbudget\b|\bcost\b|\bcharges?\b|\bdiscount\b|\binvoice\b|\bpayment\b|\bamount\b/i.test(lower)) return 'pricing'
-  if (/\bconfig\b|\bconfiguration\b|\bcustom\b|\bcustomization\b|\bsetup\b|\boption\b|\bvariant\b|\bsoftware\b|\binstall\b|\bram\b|\bgpu\b|\bcpu\b|\bstorage\b|\bspecs?\b|\bhardware\b/i.test(lower)) return 'configuration'
-  if (/\bcompare\b|\bvs\b|\bversus\b|\bdifference\b|\bbetter\b/i.test(lower)) return 'comparison'
-  if (/\btradeoff\b|\btrade-off\b|\bpros and cons\b|\bdownside\b|\bupside\b/i.test(lower)) return 'tradeoff'
-  if (/\bproof\b|\bevidence\b|\bsource\b|\bcitation\b|\bdata\b|\bconfirm\b|\bclaim\b|\btested\b/i.test(lower)) return 'evidence'
-  if (category === 'implementation') return 'implementation'
-  return 'general'
-}
-
-function buildAxisAwareTopic(
-  currentQuestion: string,
-  primaryTopic: string | null,
-  axis: QuestionAxis,
-  category: ReturnType<typeof inferQuestionCategory>
-): string {
-  if (axis === 'implementation') return 'rollout'
-  if (axis === 'pricing') return 'pricing and billing'
-  if (axis === 'timing' && /\bship|deliver|\bthis week\b|\bnext week\b/i.test(currentQuestion.toLowerCase())) return 'delivery timeline'
-  if (axis === 'configuration' && /\bram\b|\bgpu\b|\bcpu\b|\bstorage\b|\bspecs?\b|\bhardware\b/i.test(currentQuestion.toLowerCase())) return 'hardware specs'
-  if (axis === 'evidence' && /\bbattery\b|\bclaim\b|\bconfirm\b/i.test(currentQuestion.toLowerCase())) return 'claim basis'
-  if (primaryTopic && !/^(answer|question|fuzzy|probably|get|airs|rams|okay|thank)$/i.test(primaryTopic)) return primaryTopic
-  if (category === 'timing') return 'timing'
-  return currentQuestion
-}
-
-function buildAxisAwareAnswer(topic: string, axis: QuestionAxis, category: ReturnType<typeof inferQuestionCategory>): string {
-  switch (axis) {
-    case 'timing':
-      return `The direct answer on ${topic} should state the timing, the dependency that could change it, and the next fact needed to confirm it.`
-    case 'scope':
-      return `The direct answer on ${topic} should state the scope first, then whether one setup fits all cases or a split is needed.`
-    case 'configuration':
-      return `The direct answer on ${topic} should separate the standard path from optional configuration choices that change the recommendation.`
-    case 'pricing':
-      return `The direct answer on ${topic} should separate the base charge, any variable charges, and the one term that would change the total.`
-    case 'comparison':
-      return `The cleanest answer on ${topic} is to compare it on one axis first, then add the consequence of that difference.`
-    case 'tradeoff':
-      return `The right answer on ${topic} is the main trade-off, then which side matters more in this conversation.`
-    case 'implementation':
-      return `The clearest answer on ${topic} is the rollout sequence: what happens first, what happens next, and which dependency could slow it down.`
-    case 'evidence':
-      return `The direct answer on ${topic} should separate the claim from the evidence behind it and state what still needs verification.`
-    default:
-      return buildKnowledgeSay(topic, category)
-  }
-}
-
-function buildAxisAwareTalkingPoint(topic: string, axis: QuestionAxis): { title: string; detail: string; say: string; listenFor: string } {
-  switch (axis) {
-    case 'timing':
-      return {
-        title: 'Name the timing dependency',
-        detail: 'Separate the headline answer from the one dependency that could move it. That keeps the answer concrete without overcommitting.',
-        say: `The key thing to add on ${topic} is the dependency that changes the timing, not just the timing itself.`,
-        listenFor: 'Which dependency is fixed and which one is still variable.',
-      }
-    case 'scope':
-      return {
-        title: 'Separate the scope',
-        detail: 'Do not let one broad number hide real variation. Split the scope into the main groups or cases that matter.',
-        say: `The useful way to answer ${topic} is to separate the main groups or use cases, not assume one size fits all.`,
-        listenFor: 'Whether one answer fits all cases or the topic needs segmentation.',
-      }
-    case 'configuration':
-      return {
-        title: 'Separate standard from optional',
-        detail: 'Frame the default path separately from optional configuration choices. That makes the recommendation easier to act on.',
-        say: `The useful way to answer ${topic} is to separate the standard path from the optional choices that change the decision.`,
-        listenFor: 'Whether they need the standard path or a non-default option.',
-      }
-    case 'pricing':
-      return {
-        title: 'Separate base from extras',
-        detail: 'Split the base price from any optional charges, support, or deployment costs. That keeps the answer concrete and avoids billing ambiguity.',
-        say: `The useful way to answer ${topic} is to separate the base cost from any extra charges or optional services.`,
-        listenFor: 'Which fee or pricing term will actually drive the decision.',
-      }
-    case 'comparison':
-      return {
-        title: `Name the ${topic} tradeoff`,
-        detail: 'Move beyond description into the practical difference or consequence. That is what makes the answer useful in a live conversation.',
-        say: `The key thing to add on ${topic} is the practical difference that should drive the decision.`,
-        listenFor: 'Which side of the difference matters most to them.',
-      }
-    case 'tradeoff':
-      return {
-        title: `Name the ${topic} tradeoff`,
-        detail: 'Move beyond description into the practical trade-off or decision consequence. That is what makes the answer useful in a live conversation.',
-        say: `The key thing to add on ${topic} is the trade-off or decision consequence, not just the definition.`,
-        listenFor: 'Which side of the trade-off or implication they care about most.',
-      }
-    case 'implementation':
-      return {
-        title: 'Name the rollout constraint',
-        detail: 'Highlight the one constraint or bottleneck that will decide whether execution is smooth or painful.',
-        say: `The key thing to add on ${topic} is the constraint that will make the rollout easy or hard in practice.`,
-        listenFor: 'The bottleneck or dependency that will shape execution.',
-      }
-    case 'evidence':
-      return {
-        title: 'Separate the claim from proof',
-        detail: 'If the room is relying on a claim, identify what evidence is solid and what is still assumption.',
-        say: `The key thing to add on ${topic} is what we know for sure versus what still needs evidence.`,
-        listenFor: 'Whether they have proof, a source, or just a working assumption.',
-      }
-    default:
-      return {
-        title: `Name the ${topic} tradeoff`,
-        detail: 'Move beyond definition into the practical trade-off or decision consequence. That is what makes the answer useful in a live conversation.',
-        say: `The key thing to add on ${topic} is the trade-off or decision consequence, not just the definition.`,
-        listenFor: 'Which side of the trade-off or implication they care about most.',
-      }
-  }
-}
-
-function buildAxisAwareQuestion(topic: string, axis: QuestionAxis): { title: string; detail: string; say: string; listenFor: string } {
-  switch (axis) {
-    case 'timing':
-      return {
-        title: `Clarify ${topic} timing`,
-        detail: 'Ask which dependency actually controls the timing so the answer can be specific without bluffing.',
-        say: `What dependency controls the timing on ${topic} here — stock, approval, setup, or something else?`,
-        listenFor: 'The one variable that actually changes the answer.',
-      }
-    case 'scope':
-      return {
-        title: `Clarify ${topic} scope`,
-        detail: 'Ask whether one answer applies everywhere or whether the room is really talking about multiple cases.',
-        say: `Does one answer cover all of ${topic} here, or should we split it by the main cases or users?`,
-        listenFor: 'Whether the answer needs segmentation rather than one broad number or statement.',
-      }
-    case 'configuration':
-      return {
-        title: `Clarify ${topic} options`,
-        detail: 'Ask which option or configuration actually matters so the answer stays tied to the real decision.',
-        say: `Which option or configuration matters most on ${topic} here — the standard path or a non-default one?`,
-        listenFor: 'The option that should drive the recommendation.',
-      }
-    case 'pricing':
-      return {
-        title: `Clarify ${topic} terms`,
-        detail: 'Ask which pricing term actually matters most so the answer can stay concrete instead of hand-wavy.',
-        say: `Which part of ${topic} matters most here — base price, bulk discount, support, or payment terms?`,
-        listenFor: 'The pricing term that will change whether they move forward.',
-      }
-    case 'comparison':
-      return {
-        title: `Clarify ${topic} criteria`,
-        detail: 'Ask which comparison axis matters most so the answer stays useful instead of wandering across too many dimensions.',
-        say: `Which comparison axis matters most for ${topic} here — quality, cost, speed, risk, or fit?`,
-        listenFor: 'The single criterion that should shape the answer.',
-      }
-    case 'tradeoff':
-      return {
-        title: `Clarify ${topic} priority`,
-        detail: 'Ask which side of the trade-off matters more so the answer can recommend a direction instead of just describing both sides.',
-        say: `Which side of the ${topic} trade-off matters more here?`,
-        listenFor: 'The priority that should break the tie.',
-      }
-    case 'implementation':
-      return {
-        title: `Clarify ${topic} constraints`,
-        detail: 'Ask one narrow follow-up only if it would materially change the answer — for example scale, version, workflow, or timing.',
-        say: `What constraint matters most for ${topic} here — scale, version, workflow, or timing?`,
-        listenFor: 'The one variable that should shape the deeper answer.',
-      }
-    case 'evidence':
-      return {
-        title: `Clarify ${topic} evidence`,
-        detail: 'Ask what evidence or source the room is relying on so the answer does not quietly rest on an unsupported assumption.',
-        say: `What evidence or source are we relying on for ${topic} here?`,
-        listenFor: 'Whether the answer rests on evidence, precedent, or assumption.',
-      }
-    default:
-      return {
-        title: `Clarify ${topic} constraints`,
-        detail: 'Ask one narrow follow-up only if it would materially change the answer — for example scale, version, workflow, or timing.',
-        say: `What constraint matters most for ${topic} here — scale, version, workflow, or timing?`,
-        listenFor: 'The one variable that should shape the deeper answer.',
-      }
-  }
-}
-
-function buildKnowledgeSay(topic: string, category: ReturnType<typeof inferQuestionCategory>): string {
-  switch (category) {
-    case 'definition':
-      return `${topic} should be answered by saying what it is first, then why it matters in practice.`
-    case 'mechanism':
-      return `The clearest answer on ${topic} is the path from input to output, plus the main trade-off.`
-    case 'comparison':
-      return `The cleanest answer on ${topic} is to compare it on one axis first — quality, cost, speed, or fit.`
-    case 'reason':
-      return `The useful answer on ${topic} is why it matters, what changes because of it, and what decision it should influence.`
-    case 'tradeoff':
-      return `The right answer on ${topic} is the main trade-off, then which side matters more here.`
-    case 'implementation':
-      return `The right answer on ${topic} is what happens first, where the friction appears, and what must be true for rollout to work.`
-    case 'location':
-      return `The direct answer on ${topic} is the location first, then why that location matters here.`
-    case 'person':
-      return `The direct answer on ${topic} is who the person is, then why they matter here.`
-    case 'timing':
-      return `The direct answer on ${topic} is the timing itself, then what that timing changes.`
-    default:
-      return `The direct answer on ${topic} should come first, then the one implication that matters here.`
-  }
-}
 
 function collectSubstantiveQuestions(
   recentChunks: TranscriptChunk[],
@@ -526,6 +306,7 @@ function sanitizeSuggestions(
     if (title.length < 6 || detail.length < 30) continue
     if (GENERIC_TITLE_PATTERN.test(title)) continue
     if (PLACEHOLDER_PATTERN.test(`${title} ${detail} ${say ?? ''}`)) continue
+    if (SAY_PLACEHOLDER_PATTERN.test(say ?? '')) continue
     const weakSingleTopic = title.match(WEAK_SINGLE_TOPIC_PATTERN)?.[1]?.toLowerCase()
     if (weakSingleTopic && LOW_SIGNAL_TITLE_TOPICS.has(weakSingleTopic)) continue
 
@@ -541,7 +322,7 @@ function sanitizeSuggestions(
       ...suggestion,
       title,
       detail,
-      say: say && !PLACEHOLDER_PATTERN.test(say) ? say : undefined,
+      say: say && !PLACEHOLDER_PATTERN.test(say) && !SAY_PLACEHOLDER_PATTERN.test(say) ? say : undefined,
     })
   }
 
@@ -557,6 +338,8 @@ function scoreSuggestion(
   let score = 0
   const latestText = recentChunks[recentChunks.length - 1]?.text.toLowerCase() ?? ''
   const combinedText = `${suggestion.title} ${suggestion.detail} ${suggestion.say ?? ''}`.toLowerCase()
+  const currentQuestionLower = meetingState?.currentQuestion?.toLowerCase() ?? ''
+  const questionCategory = meetingState?.currentQuestion ? inferQuestionCategory(meetingState.currentQuestion) : null
 
   if (meetingState?.currentQuestion) {
     if (suggestion.type === 'answer') score += 4
@@ -610,6 +393,17 @@ function scoreSuggestion(
   if (multilingualSignals.length > 0) {
     if (/\bbilingual\b|\bspanish\b|\boperations\b|\bfinance\b|\bmigration\b|\bapproval\b/.test(combinedText)) score += 1.1
     if (suggestion.type === 'answer' && /\bweek 1\b|\bweek 2\b|\bfirst\b|\bsecond\b/.test(combinedText)) score += 0.8
+  }
+
+  if (
+    meetingState?.questionIntent === 'direct_answer' &&
+    questionCategory === 'implementation' &&
+    /\bfirst two weeks\b|\bimplementation timeline\b|\bmoved forward\b|\bmove forward\b/.test(currentQuestionLower)
+  ) {
+    if (suggestion.type === 'answer') score += 4.5
+    if (suggestion.type === 'talking_point') score += 1.25
+    if (suggestion.type === 'question') score -= 4.5
+    if (/\bweek 1\b|\bweek 2\b|\boperations\b|\bfinance\b|\bq4\b|\bmigration\b/.test(combinedText)) score += 1.6
   }
 
   if (suggestion.say) score += 1.5
@@ -686,6 +480,82 @@ export function buildFallbackSuggestions(
     : null
   const questionCategory = currentQuestion ? inferQuestionCategory(currentQuestion) : null
   const primaryTopic = extractPrimaryTopic(recentChunks, `${currentQuestion ?? ''} ${meetingContext.goal ?? ''}`) ?? null
+
+  if (
+    currentQuestion &&
+    questionIntent === 'meeting_coaching' &&
+    meetingContext.meetingType === 'Standup' &&
+    /\b(owner|make the call|blocked|blocker|dependency|slip|ship|qa|legal|security|approval)\b/i.test(currentQuestion)
+  ) {
+    fallbacks.push(
+      {
+        id: generateId(),
+        type: 'clarification',
+        title: 'Name the unblock owner',
+        detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Turn the blocker into one explicit owner question so the team knows who can make the call today.`,
+        say: 'Who can make the call on this today, and what is the fallback if they are unavailable?',
+        whyNow: 'A blocker without a decision owner becomes a slip by default.',
+        listenFor: 'A named owner and a same-day path forward.',
+      },
+      {
+        id: generateId(),
+        type: 'talking_point',
+        title: 'Separate workaround from decision',
+        detail: 'Do not wait for the perfect answer. Separate the permanent decision from the immediate workaround that keeps QA or shipping moving.',
+        say: 'We should separate the permanent decision from the immediate workaround so QA does not stall while we wait.',
+        whyNow: 'This keeps the standup action-oriented instead of becoming a circular status update.',
+        listenFor: 'Whether they can keep moving on a narrower path while the final call is pending.',
+      },
+      {
+        id: generateId(),
+        type: 'question',
+        title: 'Call out the slip risk',
+        detail: 'Tie the blocker to the actual delivery consequence so the room reacts to a concrete risk instead of a vague dependency.',
+        say: 'If nobody owns this today, what exactly slips and by when?',
+        whyNow: 'Naming the delivery consequence makes the unblock decision urgent and specific.',
+        listenFor: 'A date, milestone, or handoff that will move if this stays unresolved.',
+      }
+    )
+    return sanitizeSuggestions(fallbacks)
+  }
+
+  if (
+    currentQuestion &&
+    questionIntent === 'meeting_coaching' &&
+    meetingContext.meetingType === 'Team Review' &&
+    /\b(broke|repair|owner|handoff|root cause|communication)\b/i.test(currentQuestion)
+  ) {
+    fallbacks.push(
+      {
+        id: generateId(),
+        type: 'clarification',
+        title: 'Name what actually broke',
+        detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Force the room to name the failure mode itself instead of hiding behind broad labels like communication.`,
+        say: 'What exactly broke in the workflow or handoff, not just what the downstream symptom was?',
+        whyNow: 'Repair starts with one concrete failure mode, not a vague pattern label.',
+        listenFor: 'A specific handoff, decision gap, or process step that failed.',
+      },
+      {
+        id: generateId(),
+        type: 'question',
+        title: 'Assign the repair owner',
+        detail: 'Once the root issue is named, immediately ask who owns the repair so the review produces accountability instead of only diagnosis.',
+        say: 'Who owns the repair from here, and what do they need to change first?',
+        whyNow: 'A clean diagnosis still fails if nobody owns the fix.',
+        listenFor: 'One named owner and the first concrete change.',
+      },
+      {
+        id: generateId(),
+        type: 'talking_point',
+        title: 'Separate symptom from cause',
+        detail: 'Support noise, design confusion, and rollout pain can all be symptoms. The useful move is to distinguish the underlying coordination failure from the visible effects.',
+        say: 'The useful distinction here is the symptom versus the underlying coordination failure, because the repair owner depends on that difference.',
+        whyNow: 'That framing cuts through cross-talk and keeps the review from scattering across every symptom at once.',
+        listenFor: 'Whether the room agrees on the cause or is still mixing multiple issues together.',
+      }
+    )
+    return sanitizeSuggestions(fallbacks)
+  }
 
   if ((!currentQuestion || questionIntent === 'meeting_coaching') && meetingContext.meetingType === '1:1' && signals.risks[0]) {
     const riskLine = signals.risks[0]
@@ -767,37 +637,62 @@ export function buildFallbackSuggestions(
   }
 
   if (currentQuestion && questionIntent && questionIntent !== 'meeting_coaching') {
-    const axis = inferQuestionAxis(currentQuestion, questionCategory ?? 'general')
-    const topic = compactTopic(buildAxisAwareTopic(currentQuestion, primaryTopic, axis, questionCategory ?? 'general'))
-    const talkingPoint = buildAxisAwareTalkingPoint(topic, axis)
-    const clarifier = buildAxisAwareQuestion(topic, axis)
+    const category = questionCategory ?? 'general'
+    const categoryLabel = (
+      category === 'mechanism' ? 'mechanism' :
+      category === 'comparison' ? 'comparison' :
+      category === 'tradeoff' ? 'trade-off' :
+      category === 'implementation' ? 'implementation' :
+      category === 'definition' ? 'definition' :
+      category === 'reason' ? 'reason' :
+      category === 'location' ? 'location' :
+      category === 'person' ? 'person' :
+      category === 'timing' ? 'timing' : 'question'
+    )
+    const answerSay = (
+      category === 'mechanism'
+        ? 'Walk it as a sequence: what goes in, how the system transforms it, what comes out, and which trade-off shapes the real behavior.'
+        : category === 'comparison'
+        ? 'Compare on one axis first — quality, speed, cost, or fit — then name the consequence of that difference.'
+        : category === 'tradeoff'
+        ? 'Name the main trade-off first, then which side matters more given the constraints here.'
+        : category === 'implementation'
+        ? 'State what happens first, where the friction appears, and what must be true for it to work.'
+        : category === 'location'
+        ? 'State the location directly, then explain why it matters in this context.'
+        : category === 'person'
+        ? 'Say who they are and what they do, then explain why they matter to the situation.'
+        : category === 'timing'
+        ? 'Give the timing directly, then name the one dependency that could change it.'
+        : 'Answer directly first, then add the one implication or dependency that would change the decision.'
+    )
     fallbacks.push(
       {
         id: generateId(),
         type: 'answer',
-        title: `Answer the ${topic} question`,
-        detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Answer the question itself first, then add the dependency, trade-off, or implication that would change the decision in this conversation.`,
-        say: buildAxisAwareAnswer(topic, axis, questionCategory ?? 'general'),
-        whyNow: 'A direct knowledge question is open, so the first card should answer it rather than coach around it.',
-        listenFor: clarifier.listenFor,
+        title: `Answer the ${categoryLabel} directly`,
+        detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Answer the question itself first, then add the dependency or implication that changes the decision.`,
+        say: answerSay,
+        whyNow: 'A direct question is open — answer it before the room moves on.',
+        listenFor: 'Whether they want more depth, a different angle, or a concrete next step.',
       },
       {
         id: generateId(),
         type: 'talking_point',
-        title: talkingPoint.title,
-        detail: talkingPoint.detail,
-        say: talkingPoint.say,
-        whyNow: 'A plain answer gets stronger when it includes the practical angle the room can act on.',
-        listenFor: talkingPoint.listenFor,
+        title: 'Add the practical consequence',
+        detail: 'Move beyond the surface answer into the trade-off or constraint that shapes the real decision.',
+        say: 'Beyond the direct answer, let me add the one trade-off or constraint that should shape what you decide next.',
+        whyNow: 'A plain answer gets stronger when paired with the practical angle the room can act on.',
+        listenFor: 'Which side of the trade-off or implication they weight more.',
       },
       {
         id: generateId(),
-        type: 'question',
-        title: clarifier.title,
-        detail: clarifier.detail,
-        say: clarifier.say,
-        whyNow: 'One focused clarifier can make the answer more precise without derailing it.',
-        listenFor: clarifier.listenFor,
+        type: 'clarification',
+        title: 'Ask the one constraining question',
+        detail: 'One narrow follow-up can make the answer twice as precise without derailing the conversation.',
+        say: 'Before I go deeper — what constraint matters most here: scale, version, workflow, or timing?',
+        whyNow: 'The right clarifier makes the answer actionable instead of general.',
+        listenFor: 'A version, use case, or dependency that materially changes the answer.',
       }
     )
   }
@@ -843,6 +738,11 @@ export async function generateSuggestionBatch(
   const promptChunks = options.liveTranscriptPreview?.trim()
     ? [...recentChunks, { id: 'live-preview', text: options.liveTranscriptPreview.trim(), timestamp: 'LIVE' }]
     : recentChunks
+  const effectiveMeetingState = options.meetingState ?? deriveMeetingState(
+    transcript,
+    meetingContext,
+    options.liveTranscriptPreview?.trim() ?? ''
+  )
   const previousSuggestions = previousBatches.flatMap((batch) => batch.suggestions)
   const latestQuestionText = selectActionableQuestion(promptChunks, meetingContext)?.text
   const systemPersona = buildSystemPersona(meetingContext.meetingType)
@@ -852,7 +752,7 @@ export async function generateSuggestionBatch(
     meetingContext,
     previousBatches.slice(0, 2),
     priorMeetingContext,
-    options
+    { ...options, meetingState: effectiveMeetingState }
   )
   const transcriptSnapshot = promptChunks.map((c) => c.text).join(' ')
 
@@ -878,18 +778,13 @@ export async function generateSuggestionBatch(
     suggestions = []
   }
 
-  const fallbackSuggestions = buildFallbackSuggestions(promptChunks, meetingContext, options.meetingState)
   const previousTitleKeys = new Set(previousSuggestions.map((s) => s.title.trim().toLowerCase()))
-  const combinedCandidates = sanitizeSuggestions(
-    [
-      ...suggestions,
-      ...fallbackSuggestions.filter((fallback) => !previousTitleKeys.has(fallback.title.trim().toLowerCase())),
-    ],
-    previousSuggestions,
-    latestQuestionText
-  )
 
-  suggestions = rankSuggestions(combinedCandidates, promptChunks, meetingContext, options.meetingState)
+  if (groqFailed || suggestions.length < 2) {
+    suggestions = buildFallbackSuggestions(promptChunks, meetingContext, effectiveMeetingState)
+  } else {
+    suggestions = rankSuggestions(suggestions, promptChunks, meetingContext, effectiveMeetingState)
+  }
 
   // Single last-resort pad — 2 real suggestions + 1 generic pad beats a broken contextual one.
   if (suggestions.length < 3) {

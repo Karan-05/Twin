@@ -49,6 +49,7 @@ export interface MeetingContext {
 }
 
 export interface IntelligenceSummary {
+  overview: string | null
   decisions: string[]
   actionItems: string[]
   keyData: string[]
