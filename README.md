@@ -2,7 +2,7 @@
 
 A production-grade live meeting intelligence assistant. Transcribes your mic with a fast provisional lane plus stable timestamped chunks, surfaces 3 context-aware AI suggestions on cadence and on important conversation events, and answers questions about the meeting via chat — all running in the browser against the Groq API.
 
-**Live demo:** update with your final Vercel URL before submission  
+**Live demo:** deploy with `vercel` and paste the URL here before submission  
 **Stack:** Next.js 14 · TypeScript · Tailwind CSS · Zustand · Groq SDK
 
 ---
@@ -108,7 +108,7 @@ This is the core of the product. The brief asks evaluators to compare prompt qua
 
 **8. Title = standalone value.** Titles are constrained to ≤8 words and must be useful without clicking. The detail (shown on click) provides the full rationale and supporting context.
 
-**9. Meeting-type personas with inline few-shot examples.** Each meeting type gets a dedicated system persona (e.g., "veteran enterprise sales strategist who has closed $200M+", "former FAANG hiring manager") plus a concrete quality example in the system prompt. The example uses the same `[JUST SAID]` transcript format so the model sees exactly what ideal output looks like for that context. This is especially critical for high-stakes moments: the Interview persona example shows a STAR-structured answer to "decision with incomplete information"; the Board Meeting persona shows how to reframe a revenue miss as a strategic tradeoff.
+**9. Meeting-type personas with inline few-shot examples.** Each high-stakes meeting type gets a dedicated system persona plus a concrete counter-example embedded directly in the prompt — so the model sees the wrong move and the right move before it generates anything. Sales Call: "$200M veteran" who probes objections instead of counter-pitching, with an example of surfacing the real blocker behind "we already have a vendor." Job Interview: "former FAANG hiring manager" with a STAR template and the instruction to give the actual technical answer first. Investor Pitch: "Series B investor who has reviewed 2,000+ decks" who converts TAM claims into bottoms-up math. Board Meeting: "board strategist from 12 boards" who reframes a revenue miss into a falsifiable strategic hypothesis with a named owner and deadline — not a request for more data next quarter.
 
 **10. Grounding with anti-hallucination examples.** The live suggestion prompt includes a GROUNDING RULE with concrete anti-examples ("if the transcript says 'we pulled engineers onto migrations' but NOT how long → do NOT write 'keep engineers on migrations for two weeks'"). Showing the wrong pattern alongside the rule is more effective than a rule alone — the model pattern-matches on what to avoid.
 

@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { RefreshCw, Copy, Check, Loader2, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
+import { RefreshCw, Copy, Check, Loader2, ChevronDown, ChevronUp, Trash2, FileText } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import { generateSuggestionBatch } from '@/lib/suggestions'
+import { extractIntelligenceSummary } from '@/lib/intelligence'
 import type { SuggestionBatch, Suggestion } from '@/lib/store'
 
 const SUGGESTION_INTERVAL_S = 30
@@ -180,6 +181,10 @@ export default function SuggestionsPanel() {
     meetingContext,
     meetingState,
     priorMeetingContext,
+    intelligenceSummary,
+    isExtractingIntelligence,
+    setIntelligenceSummary,
+    setIsExtractingIntelligence,
     addSuggestionBatch,
     setIsGeneratingSuggestions,
     nextSuggestionIn,
@@ -188,6 +193,7 @@ export default function SuggestionsPanel() {
   } = useMeetingStore()
 
   const [error, setError] = useState<string | null>(null)
+  const [summaryCollapsed, setSummaryCollapsed] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const preFireRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -344,6 +350,20 @@ export default function SuggestionsPanel() {
     }
   }
 
+  const handleSummarizeNow = async () => {
+    if (!apiKey || transcript.length < 2 || isExtractingIntelligence) return
+    setIsExtractingIntelligence(true)
+    try {
+      const summary = await extractIntelligenceSummary(transcript, apiKey, meetingContext)
+      setIntelligenceSummary(summary)
+      setSummaryCollapsed(false)
+    } catch {
+      // silent — don't disrupt panel
+    } finally {
+      setIsExtractingIntelligence(false)
+    }
+  }
+
   const m = Math.floor(nextSuggestionIn / 60)
   const s = nextSuggestionIn % 60
   const countdownStr = `${m}:${String(s).padStart(2, '0')}`
@@ -417,6 +437,57 @@ export default function SuggestionsPanel() {
             onClickDetail={handleClickDetail}
           />
         ))}
+      </div>
+
+      {/* Meeting Summary */}
+      <div className="border-t border-border bg-surface-secondary flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => setSummaryCollapsed((v) => !v)}
+          className="w-full flex items-center justify-between px-4 py-2 hover:bg-surface-tertiary transition-colors"
+          aria-label={summaryCollapsed ? 'Expand meeting summary' : 'Collapse meeting summary'}
+        >
+          <div className="flex items-center gap-1.5">
+            <FileText size={11} className="text-accent" />
+            <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">Meeting Summary</span>
+            {isExtractingIntelligence && <Loader2 size={9} className="text-accent animate-spin" />}
+          </div>
+          <div className="flex items-center gap-2">
+            {transcript.length >= 2 && apiKey && !isExtractingIntelligence && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); void handleSummarizeNow() }}
+                className="text-[10px] text-accent hover:text-accent-dark font-medium"
+              >
+                Summarize now
+              </button>
+            )}
+            {summaryCollapsed ? <ChevronDown size={11} className="text-text-faint" /> : <ChevronUp size={11} className="text-text-faint" />}
+          </div>
+        </button>
+        {!summaryCollapsed && (
+          <div className="px-4 pb-3 space-y-1.5">
+            {intelligenceSummary?.overview ? (
+              <>
+                <p className="text-xs text-text-secondary leading-snug">{intelligenceSummary.overview}</p>
+                {intelligenceSummary.actionItems.length > 0 && (
+                  <ul className="space-y-0.5 mt-1">
+                    {intelligenceSummary.actionItems.map((item, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-xs text-text-secondary">
+                        <span className="text-accent flex-shrink-0">·</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-text-faint italic">
+                {transcript.length < 2 ? 'Start recording to enable summary' : 'Click "Summarize now" to generate'}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Bottom controls bar */}
