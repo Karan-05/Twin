@@ -349,6 +349,7 @@ export default function ChatPanel() {
     transcript,
     settings,
     meetingContext,
+    priorMeetingContext,
     addMessage,
     updateLastMessage,
     apiKey,
@@ -420,7 +421,8 @@ export default function ChatPanel() {
             transcript,
             apiKey,
             settings,
-            meetingContext
+            meetingContext,
+            priorMeetingContext ?? undefined
           )) {
             accumulated += delta
             updateLastMessage(accumulated)
@@ -428,7 +430,14 @@ export default function ChatPanel() {
         } else {
           // snapshot messages before adding assistant placeholder
           const allMessages = [...messages, userMsg]
-          for await (const delta of streamChatResponse(allMessages, transcript, apiKey, settings, meetingContext)) {
+          for await (const delta of streamChatResponse(
+            allMessages,
+            transcript,
+            apiKey,
+            settings,
+            meetingContext,
+            priorMeetingContext ?? undefined
+          )) {
             accumulated += delta
             updateLastMessage(accumulated)
           }
@@ -443,7 +452,7 @@ export default function ChatPanel() {
         setIsStreamingChat(false)
       }
     },
-    [isStreamingChat, messages, transcript, apiKey, settings, meetingContext, addMessage, updateLastMessage, setIsStreamingChat]
+    [isStreamingChat, messages, transcript, apiKey, settings, meetingContext, priorMeetingContext, addMessage, updateLastMessage, setIsStreamingChat]
   )
 
   useEffect(() => {

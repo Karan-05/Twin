@@ -75,10 +75,15 @@ export default function MeetingRoom() {
       setPriorMeetingContext(null)
       return
     }
-    const related = findRelatedSessions(meetingContext.meetingType)
+    const related = findRelatedSessions({
+      meetingType: meetingContext.meetingType,
+      userRole: meetingContext.userRole,
+      goal: meetingContext.goal,
+      queryText: transcript.slice(-4).map((chunk) => chunk.text).join(' '),
+    })
     const ctx = buildPriorContextSection(related)
     setPriorMeetingContext(ctx || null)
-  }, [meetingContext.meetingType, setPriorMeetingContext])
+  }, [meetingContext.meetingType, meetingContext.userRole, meetingContext.goal, transcript, setPriorMeetingContext])
 
   // Auto-save session to memory when recording stops (if substantive)
   const prevRecordingRef = useRef(isRecording)
@@ -92,7 +97,7 @@ export default function MeetingRoom() {
         userRole: meetingContext.userRole,
         goal: meetingContext.goal,
         summary: intelligenceSummary,
-        transcriptSample: transcript.slice(0, 3).map((c) => c.text).join(' ').slice(0, 300),
+        transcriptSample: transcript.slice(-4).map((c) => c.text).join(' ').slice(0, 500),
       })
     }
   }, [isRecording, transcript, intelligenceSummary, meetingContext])

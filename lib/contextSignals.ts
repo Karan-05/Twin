@@ -74,10 +74,12 @@ const LOW_VALUE_TOPIC_WORDS = new Set([
   'latest', 'topic', 'topics', 'conversation', 'conversations', 'discussion', 'discuss',
   'existence', 'everything', 'something', 'stuff', 'things', 'awesome', 'important',
   'process', 'system', 'architecture',
-  'answer', 'question', 'fuzzy', 'probably', 'get', 'airs', 'rams', 'okay', 'thank',
+  'answer', 'question', 'fuzzy', 'probably', 'get', 'airs', 'rams', 'okay', 'thank', 'however',
 ])
 
 const KNOWN_TECH_TERMS: Array<[RegExp, string]> = [
+  [/\bmulti-agent\b/i, 'multi-agent systems'],
+  [/\bai agents?\b/i, 'AI agents'],
   [/\bvoice ai agents?\b/i, 'Voice AI agents'],
   [/\bvoice agents?\b/i, 'voice agents'],
   [/\bllms?\b/i, 'LLM'],
@@ -125,6 +127,7 @@ const MEETING_CONTROL_PATTERN = /\b(who owns|owner|who can .*make the call|make 
 const DOMAIN_KNOWLEDGE_PATTERN = /\b(what kind of|what does .* do|who is .* for|how is .* used|use case|workflow|configuration|configurations|pricing|price|billing|charges?|payment terms?|plan|tier|sku|edition|package|feature set|capabilities|model|ram|storage|gpu|cpu|specs?|hardware|delivery|shipping|lead time|customization|software|battery)\b/i
 const PARTICIPANT_ANSWER_PATTERN = /\b(can you|could you|would you|why did you|how did you|what did you|where did you|when did you|who did you)\b/i
 const SHORT_BINARY_CHECK_PATTERN = /^(?:is it|is that|are they|are there)\b/i
+const RHETORICAL_TAG_PATTERN = /\b(?:right|isn'?t it|don'?t you think)\?$/i
 
 function cleanText(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
@@ -134,6 +137,7 @@ function stripQuestionLeadIn(text: string): string {
   return cleanText(text)
     .replace(/^(?:sorry to interrupt(?:\s*[—-]\s*|\s+)|let me ask(?:\s*[—-]\s*|\s+))/i, '')
     .replace(/^(?:(?:so|hey|well|um|uh|and|but|also|okay|right|yeah|now|like|alright|actually|basically)\s+){1,3}/i, '')
+    .replace(/^.*?\b(?:but|and)\s+(what|why|how|when|where|who|which|would|could|should|can|do|does|did|is|are|was|were|will|have|has|had)\b/i, '$1')
     .trim()
 }
 
@@ -301,6 +305,16 @@ export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): strin
   }
 
   for (const source of [...prioritizedSources, ...fallbackSources]) {
+    for (const [pattern, canonical] of STABLE_DOMAIN_TOPICS) {
+      if (pattern.test(source)) return canonical
+    }
+
+    for (const [pattern, canonical] of KNOWN_TECH_TERMS) {
+      if (pattern.test(source)) return canonical
+    }
+  }
+
+  for (const source of [...prioritizedSources, ...fallbackSources]) {
     const named = extractNamedPhrase(source)
     if (named) return named
   }
@@ -314,14 +328,6 @@ export function extractPrimaryTopic(chunks: TranscriptChunk[], hint = ''): strin
   }
 
   for (const source of fallbackSources) {
-    for (const [pattern, canonical] of STABLE_DOMAIN_TOPICS) {
-      if (pattern.test(source)) return canonical
-    }
-
-    for (const [pattern, canonical] of KNOWN_TECH_TERMS) {
-      if (pattern.test(source)) return canonical
-    }
-
     const acronyms = source.match(/\b[A-Z]{2,}(?:[-/][A-Z0-9]{2,})?\b/g) ?? []
     const usefulAcronym = acronyms.find((token) => !LOW_VALUE_TOPIC_WORDS.has(token.toLowerCase()))
     if (usefulAcronym) return usefulAcronym
@@ -366,6 +372,8 @@ export function selectActionableQuestion(
       if (DEEP_TECH_SIGNAL_PATTERN.test(lower)) score += 2
       if (category !== 'general') score += 1
       score += Math.min(2, meaningfulTokens.length * 0.12)
+      if (RHETORICAL_TAG_PATTERN.test(normalized) && category === 'general') score -= 3.5
+      if (/^that is\b.*\bright\?$/i.test(normalized)) score -= 2
       if (SHORT_BINARY_CHECK_PATTERN.test(lower) && normalized.length <= 28 && category === 'general') score -= 1.5
 
       return { line, score }

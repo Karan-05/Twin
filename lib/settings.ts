@@ -22,7 +22,11 @@ Participant role: {user_role}{user_goal_section}{meeting_prep_section}{proof_poi
 
 {decision_scaffolding_section}
 
+{second_brain_brief_section}
+
 {meeting_state_section}
+
+{prior_meeting_context_section}
 
 {previous_suggestions_section}
 
@@ -99,7 +103,11 @@ Full transcript:
 
 {decision_scaffolding_section}
 
+{second_brain_brief_section}
+
 {meeting_state_section}
+
+{prior_meeting_context_section}
 
 Suggestion clicked: {suggestion_title}
 Suggestion type: {suggestion_type}
@@ -167,6 +175,8 @@ Live transcript:
 
 {decision_scaffolding_section}
 
+{second_brain_brief_section}
+
 {meeting_state_section}
 
 ## Non-negotiable format rules
@@ -207,7 +217,7 @@ export interface AppSettings {
 
 const SETTINGS_KEY = 'meeting_copilot_settings'
 const SETTINGS_VERSION_KEY = 'meeting_copilot_settings_version'
-const SETTINGS_VERSION = '2026-04-25-v6'
+const SETTINGS_VERSION = '2026-04-26-v8'
 const MAX_PROMPT_LENGTH = 24_000
 
 function sanitizePrompt(value: unknown, fallback: string): string {

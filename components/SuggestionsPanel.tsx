@@ -4,12 +4,14 @@ import { RefreshCw, Copy, Check, Loader2, ChevronDown, ChevronUp, Trash2, FileTe
 import { useMeetingStore } from '@/lib/store'
 import { generateSuggestionBatch } from '@/lib/suggestions'
 import { extractIntelligenceSummary } from '@/lib/intelligence'
+import { deriveSecondBrainBrief } from '@/lib/secondBrain'
 import type { SuggestionBatch, Suggestion } from '@/lib/store'
 
 const SUGGESTION_INTERVAL_S = 30
 const FIRST_BATCH_DELAY_S = 30
 const PRE_FIRE_S = 0
 const EVENT_TRIGGER_COOLDOWN_MS = 6000
+const FALLBACK_SNAPSHOT_MARKER = '[Local fallback suggestions used due to temporary Groq unavailability]'
 
 const TYPE_STYLES: Record<
   string,
@@ -169,6 +171,16 @@ function SkeletonBatch() {
   )
 }
 
+function isFallbackBatch(batch: SuggestionBatch): boolean {
+  return batch.transcriptSnapshot.includes(FALLBACK_SNAPSHOT_MARKER)
+}
+
+function hasSameTitles(left: SuggestionBatch | undefined, right: SuggestionBatch): boolean {
+  if (!left) return false
+  if (left.suggestions.length !== right.suggestions.length) return false
+  return left.suggestions.every((suggestion, index) => suggestion.title === right.suggestions[index]?.title)
+}
+
 export default function SuggestionsPanel() {
   const {
     isRecording,
@@ -238,7 +250,11 @@ export default function SuggestionsPanel() {
           triggerReason: reason,
         }
       )
-      addSuggestionBatch(batch)
+      const currentTopBatch = suggestionBatchesRef.current[0]
+      const duplicateFallback = isFallbackBatch(batch) && currentTopBatch && isFallbackBatch(currentTopBatch) && hasSameTitles(currentTopBatch, batch)
+      if (!duplicateFallback) {
+        addSuggestionBatch(batch)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate suggestions')
     } finally {
@@ -367,6 +383,12 @@ export default function SuggestionsPanel() {
   const m = Math.floor(nextSuggestionIn / 60)
   const s = nextSuggestionIn % 60
   const countdownStr = `${m}:${String(s).padStart(2, '0')}`
+  const briefTranscript = liveTranscriptPreview.trim()
+    ? [...transcript, { id: 'live-preview', text: liveTranscriptPreview.trim(), timestamp: 'LIVE' }]
+    : transcript
+  const secondBrainBrief = briefTranscript.length > 0
+    ? deriveSecondBrainBrief(briefTranscript, meetingContext, meetingState)
+    : null
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-surface-primary">
@@ -439,7 +461,7 @@ export default function SuggestionsPanel() {
         ))}
       </div>
 
-      {/* Meeting Summary */}
+      {/* Second Brain */}
       <div className="border-t border-border bg-surface-secondary flex-shrink-0">
         {/* div not button — avoids nested-button invalid HTML */}
         <div
@@ -449,11 +471,11 @@ export default function SuggestionsPanel() {
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSummaryCollapsed((v) => !v) }}
           className="w-full flex items-center justify-between px-4 py-2 hover:bg-surface-tertiary transition-colors cursor-pointer"
           aria-expanded={!summaryCollapsed}
-          aria-label={summaryCollapsed ? 'Expand meeting summary' : 'Collapse meeting summary'}
+          aria-label={summaryCollapsed ? 'Expand second-brain brief' : 'Collapse second-brain brief'}
         >
           <div className="flex items-center gap-1.5">
             <FileText size={11} className="text-accent" />
-            <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">Meeting Summary</span>
+            <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">Second Brain</span>
             {isExtractingIntelligence && <Loader2 size={9} className="text-accent animate-spin" />}
           </div>
           <div className="flex items-center gap-2">
@@ -470,24 +492,49 @@ export default function SuggestionsPanel() {
           </div>
         </div>
         {!summaryCollapsed && (
-          <div className="px-4 pb-3 space-y-1.5">
-            {intelligenceSummary?.overview ? (
+          <div className="px-4 pb-3 space-y-2">
+            {secondBrainBrief ? (
               <>
-                <p className="text-xs text-text-secondary leading-snug">{intelligenceSummary.overview}</p>
-                {intelligenceSummary.actionItems.length > 0 && (
-                  <ul className="space-y-0.5 mt-1">
-                    {intelligenceSummary.actionItems.map((item, i) => (
-                      <li key={i} className="flex items-start gap-1.5 text-xs text-text-secondary">
+                <p className="text-xs text-text-secondary leading-snug">
+                  {intelligenceSummary?.overview ?? secondBrainBrief.overview}
+                </p>
+                {secondBrainBrief.bestMove && (
+                  <p className="text-[11px] text-text-muted leading-snug">
+                    <span className="font-semibold text-text-secondary">Best move:</span> {secondBrainBrief.bestMove}
+                  </p>
+                )}
+                {secondBrainBrief.tension && (
+                  <p className="text-[11px] text-text-muted leading-snug">
+                    <span className="font-semibold text-text-secondary">Hidden tension:</span> {secondBrainBrief.tension}
+                  </p>
+                )}
+                {secondBrainBrief.memoryAnchors.length > 0 && (
+                  <ul className="space-y-0.5">
+                    {secondBrainBrief.memoryAnchors.slice(0, 3).map((item, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-[11px] text-text-muted">
                         <span className="text-accent flex-shrink-0">·</span>
                         <span>{item}</span>
                       </li>
                     ))}
                   </ul>
                 )}
+                {intelligenceSummary?.actionItems.length ? (
+                  <div className="pt-1">
+                    <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1">Action Items</p>
+                    <ul className="space-y-0.5">
+                      {intelligenceSummary.actionItems.slice(0, 2).map((item, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-[11px] text-text-muted">
+                          <span className="text-accent flex-shrink-0">·</span>
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </>
             ) : (
               <p className="text-xs text-text-faint italic">
-                {transcript.length < 2 ? 'Start recording to enable summary' : 'Click "Summarize now" to generate'}
+                {transcript.length < 2 ? 'Start recording to enable a live brief' : 'Click "Summarize now" to generate'}
               </p>
             )}
           </div>
