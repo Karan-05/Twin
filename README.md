@@ -4,7 +4,7 @@ A production-grade live meeting intelligence assistant built around a **second-b
 
 Transcribes your mic with a fast provisional lane plus stable timestamped chunks, surfaces 3 context-aware AI suggestions on cadence and on important conversation events, answers questions about the meeting via chat, and runs a live Second Brain panel that shows what the room is about, the hidden tension, the best next move, and memories recalled from past sessions — all without a single API call in the local intelligence path.
 
-**Live demo:** deploy with `vercel` and paste the URL here before submission  
+**Live demo:** https://twin-f8lh.vercel.app  
 **Stack:** Next.js 14 · TypeScript · Tailwind CSS · Zustand · Groq SDK
 
 ---
