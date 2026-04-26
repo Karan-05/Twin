@@ -441,10 +441,14 @@ export default function SuggestionsPanel() {
 
       {/* Meeting Summary */}
       <div className="border-t border-border bg-surface-secondary flex-shrink-0">
-        <button
-          type="button"
+        {/* div not button — avoids nested-button invalid HTML */}
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => setSummaryCollapsed((v) => !v)}
-          className="w-full flex items-center justify-between px-4 py-2 hover:bg-surface-tertiary transition-colors"
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSummaryCollapsed((v) => !v) }}
+          className="w-full flex items-center justify-between px-4 py-2 hover:bg-surface-tertiary transition-colors cursor-pointer"
+          aria-expanded={!summaryCollapsed}
           aria-label={summaryCollapsed ? 'Expand meeting summary' : 'Collapse meeting summary'}
         >
           <div className="flex items-center gap-1.5">
@@ -457,14 +461,14 @@ export default function SuggestionsPanel() {
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); void handleSummarizeNow() }}
-                className="text-[10px] text-accent hover:text-accent-dark font-medium"
+                className="text-[10px] text-accent hover:text-accent-dark font-medium px-1"
               >
                 Summarize now
               </button>
             )}
             {summaryCollapsed ? <ChevronDown size={11} className="text-text-faint" /> : <ChevronUp size={11} className="text-text-faint" />}
           </div>
-        </button>
+        </div>
         {!summaryCollapsed && (
           <div className="px-4 pb-3 space-y-1.5">
             {intelligenceSummary?.overview ? (
