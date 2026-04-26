@@ -211,6 +211,7 @@ async function fetchBatch(
   }))
 
   const raw = response.choices[0]?.message?.content ?? '[]'
+  console.log('[DIAG] fetchBatch raw response (first 300):', raw.slice(0, 300))
   const cleanedRaw = raw
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/i, '')
@@ -222,6 +223,7 @@ async function fetchBatch(
     ? cleanedRaw.slice(arrayStart, arrayEnd + 1)
     : cleanedRaw
 
+  console.log('[DIAG] fetchBatch jsonStr (first 300):', jsonStr.slice(0, 300))
   const parsed = JSON.parse(jsonStr) as Array<{
     type: string
     title: string
@@ -242,6 +244,7 @@ async function fetchBatch(
   }))
 
   const cleanedSuggestions = sanitizeSuggestions(suggestions, previousSuggestions, blockedQuestionText)
+  console.log('[DIAG] fetchBatch after sanitize:', cleanedSuggestions.length, 'suggestions')
   if (cleanedSuggestions.length < 2) {
     throw new Error('Suggestion batch was too weak to use')
   }
@@ -770,14 +773,16 @@ export async function generateSuggestionBatch(
         2,
         500
       )
-    } catch {
+    } catch (err) {
+      console.warn('[DIAG] fetchBatch first attempt failed, retrying strict:', err)
       suggestions = await withRetry(
         () => fetchBatch(systemPersona, userContent, apiKey, true, previousSuggestions, latestQuestionText),
         2,
         500
       )
     }
-  } catch {
+  } catch (err) {
+    console.error('[DIAG] fetchBatch all retries exhausted, using fallback:', err)
     groqFailed = true
     suggestions = []
   }

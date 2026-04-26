@@ -95,6 +95,14 @@ function buildRoleAwareDetailFallback(
   const hasConcreteSay = suggestionSay && !/\b(answer|question|rollout sequence)\b/i.test(suggestionSay)
   const liveText = `${openQuestion?.text ?? ''} ${latest?.text ?? ''} ${meetingContext.goal ?? ''} ${meetingContext.prepNotes ?? ''}`
 
+  // If the question is about a topic (technical, domain, general knowledge) rather than
+  // meeting navigation, defer to the generic knowledge path — no hardcoded topic check needed.
+  const questionText = openQuestion?.text ?? latest?.text ?? topic
+  const questionIntent = inferQuestionIntent(questionText, meetingContext)
+  if (questionIntent === 'technical_knowledge' || questionIntent === 'domain_knowledge' || questionIntent === 'general_knowledge') {
+    return null
+  }
+
   if (
     meetingContext.meetingType === 'Standup' &&
     /\b(blocked|blocker|owner|make the call|dependency|slip|ship|approve|approval|qa|legal|security|workaround)\b/i.test(liveText)
@@ -206,34 +214,6 @@ function buildRoleAwareDetailFallback(
         ? `> "Say: ${suggestionSay}"`
         : '> "Say: That makes sense — can you give me one concrete example of where this showed up recently, and what better would look like over the next month?"',
       '- [ ] Next step to lock: confirm the behavior to change, who will notice it, and when you should check back in.',
-    ]
-  }
-
-  if (
-    /\bllm|large language model|transformer|tokenization|tokenisation|embedding|embeddings|attention|next token\b/i.test(liveText)
-  ) {
-    return [
-      `**In short:** Explain the system in order, then separate training from inference so the answer feels concrete instead of mystical.`,
-      openQuestion ? `- Technical question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Use a real sequence, not abstract AI marketing language.',
-      '- Walk it as a pipeline: text is tokenized, tokens are turned into embeddings with positional information, attention layers update those representations using surrounding context, and decoding produces one next token at a time.',
-      '- Then separate training from inference: training is where the weights learned statistical patterns, inference is the live pass where the model applies those learned weights to the current prompt.',
-      hasConcreteSay
-        ? `> "Say: ${suggestionSay}"`
-        : '> "Say: An LLM works in a sequence. It tokenizes the input, maps those tokens into embeddings, uses transformer attention to mix in context across the sequence, and then predicts the next token repeatedly until it completes the answer. Training is the earlier step that taught the model those weights; inference is the live step using them on your prompt."',
-      '- [ ] Next step to lock: ask whether they want the training loop, the attention mechanism, or the real-time serving stack next.',
-    ]
-  }
-
-  if (/\barchitecture|pipeline|workflow|integration|system|platform|agent\b/i.test(liveText)) {
-    return [
-      `**In short:** Explain the system as a concrete flow: input, core processing, output, and the main constraint that shapes real-world behavior.`,
-      openQuestion ? `- System question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Make the path legible before adding nuance.',
-      '- Start with what comes in, then what transforms it, then what the user or downstream system actually gets out.',
-      '- End with the bottleneck or trade-off that matters in practice: latency, accuracy, cost, reliability, or integration complexity.',
-      hasConcreteSay
-        ? `> "Say: ${suggestionSay}"`
-        : `> "Say: The clearest way to explain ${topic} is the flow from input to output, plus the main constraint that shapes the real trade-offs in production."`,
-      '- [ ] Next step to lock: ask whether they want the high-level flow, the bottleneck, or the implementation detail next.',
     ]
   }
 
