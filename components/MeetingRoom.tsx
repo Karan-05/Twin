@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Settings, Download, Pencil, Check } from 'lucide-react'
+import { Settings, Download, Pencil, Check, KeyRound } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import { exportSession } from '@/lib/export'
 import { saveSession, findRelatedSessions, buildPriorContextSection } from '@/lib/memory'
@@ -48,6 +48,7 @@ export default function MeetingRoom() {
     meetingContext,
     intelligenceSummary,
     settings,
+    apiKey,
     setApiKey,
     setSettings,
     setSessionTitle,
@@ -249,6 +250,17 @@ export default function MeetingRoom() {
               <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
               LIVE
             </span>
+          )}
+          {!apiKey && (
+            <button
+              type="button"
+              onClick={() => { void handleOpenSettings() }}
+              className="flex items-center gap-1 px-2 py-0.5 bg-amber-50 border border-amber-300 text-amber-700 rounded-full text-xs font-medium hover:bg-amber-100 transition-colors"
+              title="Groq API key not set — click to configure"
+            >
+              <KeyRound size={11} />
+              Set API key
+            </button>
           )}
           <button
             type="button"
