@@ -196,19 +196,6 @@ function buildRoleAwareDetailFallback(
     ]
   }
 
-  if (meetingContext.meetingType === '1:1') {
-    return [
-      `**In short:** Respond on **${topic}** with one respectful line, then ask for one example, the pattern behind it, and the target for the stated time window.`,
-      openQuestion ? `- Feedback moment: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Treat vague feedback as something to make observable, not something to absorb passively.',
-      '- Keep the tone calm and direct: acknowledge the feedback, ask for one recent example, then ask what better should look like over the next month or stated window.',
-      '- If multiple stakeholders were named, ask which pattern matters most and where it showed up most clearly.',
-      hasConcreteSay
-        ? `> "Say: ${suggestionSay}"`
-        : '> "Say: That makes sense — can you give me one concrete example of where this showed up recently, and what better would look like over the next month?"',
-      '- [ ] Next step to lock: confirm the behavior to change, who will notice it, and when you should check back in.',
-    ]
-  }
-
   if (
     /\bllm|large language model|transformer|tokenization|tokenisation|embedding|embeddings|attention|next token\b/i.test(liveText)
   ) {
@@ -234,6 +221,19 @@ function buildRoleAwareDetailFallback(
         ? `> "Say: ${suggestionSay}"`
         : `> "Say: The clearest way to explain ${topic} is the flow from input to output, plus the main constraint that shapes the real trade-offs in production."`,
       '- [ ] Next step to lock: ask whether they want the high-level flow, the bottleneck, or the implementation detail next.',
+    ]
+  }
+
+  if (meetingContext.meetingType === '1:1') {
+    return [
+      `**In short:** Respond on **${topic}** with one respectful line, then ask for one example, the pattern behind it, and the target for the stated time window.`,
+      openQuestion ? `- Feedback moment: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Treat vague feedback as something to make observable, not something to absorb passively.',
+      '- Keep the tone calm and direct: acknowledge the feedback, ask for one recent example, then ask what better should look like over the next month or stated window.',
+      '- If multiple stakeholders were named, ask which pattern matters most and where it showed up most clearly.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : '> "Say: That makes sense — can you give me one concrete example of where this showed up recently, and what better would look like over the next month?"',
+      '- [ ] Next step to lock: confirm the behavior to change, who will notice it, and when you should check back in.',
     ]
   }
 

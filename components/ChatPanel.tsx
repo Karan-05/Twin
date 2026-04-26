@@ -3,7 +3,6 @@ import { useRef, useState, useCallback, useEffect } from 'react'
 import { Send, Trash2, Sparkles, Copy, Check } from 'lucide-react'
 import { useMeetingStore } from '@/lib/store'
 import { streamChatResponse, streamDetailedAnswer } from '@/lib/chat'
-import { extractIntelligenceSummary } from '@/lib/intelligence'
 import { generateId, formatTimestamp } from '@/lib/utils'
 import { ErrorBoundary } from './ErrorBoundary'
 import type { Suggestion, IntelligenceSummary } from '@/lib/store'
@@ -359,7 +358,6 @@ export default function ChatPanel() {
     clearMessages,
     intelligenceSummary,
     isExtractingIntelligence,
-    setIntelligenceSummary,
     isRecording,
   } = useMeetingStore()
 
@@ -411,21 +409,7 @@ export default function ChatPanel() {
       try {
         let accumulated = ''
 
-        const isSummaryRequest = !isDetailedAnswer && /(meeting\s+)?summar(y|ize|ised|ized)|what\s+(happened|was\s+discussed|did\s+we\s+cover)|key\s+(points|takeaways|decisions|outcomes)/i.test(text.trim())
-
-        if (isSummaryRequest && transcript.length >= 2) {
-          updateLastMessage('Summarizing…')
-          const summary = await extractIntelligenceSummary(transcript, apiKey, meetingContext)
-          setIntelligenceSummary(summary)
-          const parts: string[] = []
-          if (summary.overview) parts.push(`**Overview**\n${summary.overview}`)
-          if (summary.decisions.length > 0) parts.push(`**Decisions**\n${summary.decisions.map((d) => `- ${d}`).join('\n')}`)
-          if (summary.actionItems.length > 0) parts.push(`**Action Items**\n${summary.actionItems.map((a) => `- ${a}`).join('\n')}`)
-          if (summary.keyData.length > 0) parts.push(`**Key Facts**\n${summary.keyData.map((k) => `- ${k}`).join('\n')}`)
-          if (summary.openQuestions.length > 0) parts.push(`**Open Questions**\n${summary.openQuestions.map((q) => `- ${q}`).join('\n')}`)
-          accumulated = parts.join('\n\n') || 'Not enough transcript yet — keep recording and ask again.'
-          updateLastMessage(accumulated)
-        } else if (isDetailedAnswer && suggestion) {
+        if (isDetailedAnswer && suggestion) {
           for await (const delta of streamDetailedAnswer(
             suggestion.title,
             suggestion.type,
@@ -459,7 +443,7 @@ export default function ChatPanel() {
         setIsStreamingChat(false)
       }
     },
-    [isStreamingChat, messages, transcript, apiKey, settings, meetingContext, addMessage, updateLastMessage, setIsStreamingChat, setIntelligenceSummary]
+    [isStreamingChat, messages, transcript, apiKey, settings, meetingContext, addMessage, updateLastMessage, setIsStreamingChat]
   )
 
   useEffect(() => {
