@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { loadSettings } from './settings'
 import type { AppSettings } from './settings'
 import type { MeetingState } from './meetingState'
+import type { SavedSession } from './memory'
 
 export type Sentiment = 'positive' | 'neutral' | 'tense' | 'confused'
 
@@ -103,6 +104,8 @@ interface MeetingStore {
   setIsExtractingIntelligence: (v: boolean) => void
   priorMeetingContext: string | null
   setPriorMeetingContext: (ctx: string | null) => void
+  relatedSessions: SavedSession[]
+  setRelatedSessions: (sessions: SavedSession[]) => void
   focusedChunkId: string | null
   setFocusedChunkId: (id: string | null) => void
   addTranscriptChunk: (chunk: TranscriptChunk) => void
@@ -135,6 +138,7 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
   intelligenceSummary: null,
   isExtractingIntelligence: false,
   priorMeetingContext: null,
+  relatedSessions: [],
   focusedChunkId: null,
 
   setApiKey: (key) => set({ apiKey: key }),
@@ -151,6 +155,7 @@ export const useMeetingStore = create<MeetingStore>((set) => ({
   setIntelligenceSummary: (s) => set({ intelligenceSummary: s }),
   setIsExtractingIntelligence: (v) => set({ isExtractingIntelligence: v }),
   setPriorMeetingContext: (ctx) => set({ priorMeetingContext: ctx }),
+  setRelatedSessions: (sessions) => set({ relatedSessions: sessions }),
   setFocusedChunkId: (id) => set({ focusedChunkId: id }),
   addTranscriptChunk: (chunk) =>
     set((s) => ({ transcript: [...s.transcript, chunk] })),

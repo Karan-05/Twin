@@ -1,6 +1,8 @@
 # MeetingCopilot
 
-A production-grade live meeting intelligence assistant. Transcribes your mic with a fast provisional lane plus stable timestamped chunks, surfaces 3 context-aware AI suggestions on cadence and on important conversation events, and answers questions about the meeting via chat — all running in the browser against the Groq API.
+A production-grade live meeting intelligence assistant built around a **second-brain architecture**: every conversation builds persistent memory, and that memory surfaces back into the live meeting as proactive context — not on demand, but automatically, the moment it becomes relevant.
+
+Transcribes your mic with a fast provisional lane plus stable timestamped chunks, surfaces 3 context-aware AI suggestions on cadence and on important conversation events, answers questions about the meeting via chat, and runs a live Second Brain panel that shows what the room is about, the hidden tension, the best next move, and memories recalled from past sessions — all without a single API call in the local intelligence path.
 
 **Live demo:** deploy with `vercel` and paste the URL here before submission  
 **Stack:** Next.js 14 · TypeScript · Tailwind CSS · Zustand · Groq SDK
@@ -35,7 +37,7 @@ Both open at `http://localhost:3000`. Go to **Settings** (top-right gear) and pa
 | **Transcript (left)** | Mic → Whisper Large V3 → live provisional preview every ~5s plus stable timestamped chunks every ~30s. Copy-on-hover. Tab+Mic mode mixes system audio via WebRTC. Includes session-only meeting prep notes and proof points the user can safely reuse in answers. |
 | **Suggestions (middle)** | 3 AI suggestions every ~30s plus event-triggered refreshes when a question, risky claim, blocker, deadline, or loop is detected. Newest batch on top. Cards use Say · Why now · Listen for so the preview is valuable without clicking. |
 | **Chat (right)** | Click a suggestion for a detailed answer, or ask anything directly. Full transcript as context. Streaming. |
-| **Intelligence Strip** | Persistent panel that auto-extracts Decisions · Action Items · Key Data · Open Questions every 60s. |
+| **Intelligence Strip** | Two panels. (1) AI extraction: Decisions · Action Items · Key Data · Open Questions, updated every 60s. (2) Second Brain: live brief (Now / Tension / Best Move) derived locally from the transcript — no API call — plus memory cards recalled from past similar sessions. |
 
 ---
 
@@ -83,6 +85,39 @@ Groq gpt-oss-120b (streaming)  ──►  ChatPanel
                          ▼                                                        │
               Groq gpt-oss-120b  ──►  IntelligenceStrip  ─────────────────────── ┘
 ```
+
+---
+
+## Second Brain Architecture
+
+The core thesis: a meeting copilot that only helps during the meeting is half a product. The other half is remembering what happened and surfacing it the next time it matters.
+
+### Two memory layers
+
+**Layer 1 — Live session intelligence (no API call, no latency)**
+Every 30s the app derives a `SecondBrainBrief` directly from the current transcript using deterministic logic (`lib/secondBrain.ts`):
+- **Now**: what the conversation is actually about (topic + current open question)
+- **Tension**: the hidden constraint — blocker + deadline, two competing threads, or unverified claim
+- **Best move**: the single highest-leverage action given the meeting state
+- **Memory anchors**: the 4 facts the model should weight most in its next response
+
+This brief is injected into every suggestion prompt and every chat response, replacing generic instruction with live situational context. The user also sees it in the Second Brain panel of the Intelligence Strip.
+
+**Layer 2 — Cross-session persistent memory (localStorage)**
+When a session ends (recording stops with ≥5 transcript segments and an intelligence summary), the session is saved to `localStorage` with its summary, transcript sample, and meeting metadata (`lib/memory.ts`).
+
+When a new session of the same type starts, `findRelatedSessions` scores past sessions by:
+- Meeting type match (+4 pts)
+- Role match (+1.25 pts)  
+- Token overlap between past content and current live transcript (0.85 pts per shared content token)
+- Goal match (+1.5 pts)
+- Recency decay (linear over 30-day window)
+
+The top 3 sessions are injected into the prompt as `## Relevant memories` and rendered in the Second Brain panel as memory cards — showing past decisions, action items, and open questions that are still unresolved.
+
+### Why this is different from RAG
+
+RAG retrieves documents on demand. This system retrieves **session-level behavioral context** — what role you were in, what you decided, what you committed to, what stayed unresolved — and surfaces it the moment you start a similar meeting, before you ask. The model doesn't just know about the topic. It knows about *you in this type of meeting*.
 
 ---
 

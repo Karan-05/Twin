@@ -45,18 +45,6 @@ function isWeakDetailedAnswer(
   if ((suggestionType === 'answer' || suggestionType === 'talking_point') && !/Say:/i.test(trimmed)) return true
   if (bulletCount < (suggestionType === 'answer' || suggestionType === 'talking_point' ? 3 : 2)) return true
 
-  const joinedTranscript = transcript.map((chunk) => chunk.text).join(' ')
-  const needsPhasedPlan =
-    meetingContext.meetingType === 'Sales Call' &&
-    /\bfirst two weeks\b|\bimplementation timeline\b|\bmoved forward\b|\bmove forward\b/i.test(joinedTranscript) &&
-    /\boperations\b|\bfinance\b|\bq4\b|\bmigraci[oó]n\b|\bbilingual\b|sí\b/i.test(`${joinedTranscript} ${meetingContext.prepNotes ?? ''}`)
-
-  if (needsPhasedPlan) {
-    if (!/\bWeek\s*1\b/i.test(trimmed) || !/\bWeek\s*2\b/i.test(trimmed)) return true
-    if (!/\boperations\b/i.test(trimmed) || !/\bfinance\b/i.test(trimmed)) return true
-    if (!/Next step to lock/i.test(trimmed)) return true
-  }
-
   return false
 }
 
@@ -229,25 +217,6 @@ function buildRoleAwareDetailFallback(
   }
 
   if (
-    meetingContext.meetingType === 'Sales Call' &&
-    /\b(first two weeks|implementation timeline|move forward|moved forward|implementation)\b/i.test(openQuestion?.text ?? '') &&
-    /\b(bilingual|operations|ops|finance|approval|q4)\b/i.test(`${meetingContext.prepNotes ?? ''} ${latest?.text ?? ''} ${openQuestion?.text ?? ''}`)
-  ) {
-    const rolloutSayIsConcrete = suggestionSay && /\bweek 1\b|\bweek 2\b|\boperations\b|\bfinance\b|\bq4\b/i.test(suggestionSay)
-    return [
-      `**In short:** Answer the rollout sequence directly, then tie it to the hidden stakeholder concern before locking the next step.`,
-      openQuestion ? `- Rollout question: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- Give a direct implementation sequence, not a vague reassurance.',
-      '- Spanish concern to absorb: **operations** does not want another long migration this quarter, so keep the first phase explicitly lightweight.',
-      '- **Week 1:** run the kickoff with the operations stakeholders, map the current workflow, and confirm what stays lightweight so this does not become another long migration.',
-      '- **Week 2:** review the first working path with operations and finance, surface any approval blocker, and decide whether this is concrete enough to prioritize now instead of waiting for **Q4**.',
-      rolloutSayIsConcrete
-        ? `> "Say: ${suggestionSay}"`
-        : '> "Say: Week 1 is a kickoff with operations to map the current workflow and keep the rollout lightweight. Week 2 is a review of the first working path with operations and finance so we can decide now, not wait for Q4."',
-      '- [ ] Next step to lock: confirm who from operations and finance needs to see that walkthrough, and by when.',
-    ]
-  }
-
-  if (
     meetingContext.meetingType === 'Brainstorm' &&
     /\b(brainstorm|loop|looping|narrow|decision|deciding|criteria|options)\b/i.test(liveText)
   ) {
@@ -277,22 +246,23 @@ function buildRoleAwareDetailFallback(
   }
 
   if (meetingContext.meetingType === 'Board Meeting') {
-    const migrationLine = transcript.find((chunk) => /\bmigrations?\b|\broadmap\b/i.test(chunk.text))
-    const growthLine = transcript.find((chunk) => /\bupsell\b|\bpackaging\b|\badoption\b/i.test(chunk.text))
-    const leverageLine = transcript.find((chunk) => /\bdurable leverage\b/i.test(chunk.text))
+    const boardSignals = extractConversationSignals(transcript)
+    const boardRisk = boardSignals.risks[0] ?? boardSignals.numericClaims[0]
+    const boardCommitment = boardSignals.commitments[0]
+    const boardQuestion = openQuestion ?? boardSignals.questions[0]
 
     return [
-      `**In short:** Answer the board-level trade-off directly, then tie it to leverage, capital allocation, and the unresolved growth decision.`,
-      leverageLine ? `- Board frame: "${leverageLine.text}" [${leverageLine.timestamp}]` : (latest ? `- Board context: "${latest.text}" [${latest.timestamp}]` : '- Keep the response at board altitude, not update mode.'),
-      migrationLine
-        ? `- Strategic cost: "${migrationLine.text}" [${migrationLine.timestamp}]`
-        : '- Name the strategic trade-off first, then what it is costing on the product side.',
-      growthLine
-        ? `- Growth thread still open: "${growthLine.text}" [${growthLine.timestamp}]`
-        : '- Tie the allocation trade-off to the unresolved growth or packaging decision the board actually cares about.',
+      `**In short:** Answer the board-level trade-off directly on **${topic}**, then tie it to capital allocation, the open risk, and the unresolved strategic decision.`,
+      boardQuestion ? `- Board question: "${boardQuestion.text}" [${boardQuestion.timestamp}]` : (latest ? `- Board context: "${latest.text}" [${latest.timestamp}]` : '- Keep the response at board altitude, not update mode.'),
+      boardRisk
+        ? `- Risk or claim on the table: "${boardRisk.text}" [${boardRisk.timestamp}]`
+        : '- Name the strategic trade-off first — what it costs on the product or financial side.',
+      boardCommitment
+        ? `- Commitment to anchor on: "${boardCommitment.text}" [${boardCommitment.timestamp}]`
+        : '- Tie the allocation trade-off to the unresolved strategic decision the board actually cares about.',
       hasConcreteSay
         ? `> "Say: ${suggestionSay}"`
-        : `> "Say: The trade-off is that migrations protected renewals, but they also slowed the platform and left the AI upsell story under-packaged. The board decision is whether that is a short-term bridge or the way we are going to keep operating."`,
+        : `> "Say: The board-level trade-off here is between [the cost of the current path] and [the growth option we are not fully pursuing]. The decision is whether the current allocation is a temporary bridge or the way we are going to keep operating."`,
       '- [ ] Next step to lock: frame the trigger, date, or metric that tells the board when this allocation should change.',
     ]
   }
@@ -326,6 +296,39 @@ function buildLocalChatFallback(
   const questionIntent = inferQuestionIntent(question?.text ?? userMessage, meetingContext)
   const secondBrainBrief = deriveSecondBrainBrief(transcript.slice(-8), meetingContext)
 
+  // Summary / recap queries — build structured output from signals, no rate-limit mention
+  const isSummaryQuery = /summar(y|ize|ise|ised|ized)|recap|key\s+(points?|takeaways?|decisions?)/i.test(userMessage)
+  if (isSummaryQuery) {
+    const lines: string[] = [`**Meeting Summary**`, `**Topic:** ${topic}`]
+
+    const observations = [
+      ...signals.numericClaims.slice(0, 2).map((c) => `- ${c.text} [${c.timestamp}]`),
+      ...signals.risks.slice(0, 1).map((r) => `- Risk flagged: ${r.text} [${r.timestamp}]`),
+    ]
+    if (observations.length > 0) {
+      lines.push('\n**Key Observations:**')
+      lines.push(...observations)
+    }
+
+    const openQs = signals.questions.slice(0, 3)
+    if (openQs.length > 0) {
+      lines.push('\n**Open Questions:**')
+      for (const q of openQs) lines.push(`- ${q.text} [${q.timestamp}]`)
+    }
+
+    const commitments = signals.commitments.slice(0, 3)
+    if (commitments.length > 0) {
+      lines.push('\n**Commitments / Next Steps:**')
+      for (const c of commitments) lines.push(`- ${c.text} [${c.timestamp}]`)
+    }
+
+    if (transcript.length < 3) {
+      lines.push('\n*(Not enough transcript yet — keep recording for a fuller summary.)*')
+    }
+
+    return lines.join('\n')
+  }
+
   if (questionIntent !== 'meeting_coaching') {
     return [
       `**In short:** ${questionIntent === 'direct_answer'
@@ -340,7 +343,6 @@ function buildLocalChatFallback(
         ? '- If the answer depends on the participant’s experience, timing, or constraints, make that dependency explicit instead of bluffing.'
         : '- If the fact depends on a version, date, configuration, or policy, state that variable explicitly instead of bluffing.',
       `- Your question: "${userMessage}"`,
-      '- Groq is temporarily rate-limited, so this is a local answer-first fallback rather than a full model answer.',
     ].join('\n')
   }
 
@@ -381,7 +383,6 @@ function buildLocalChatFallback(
 
   lines.push(genericCategoryLine)
   lines.push(`- Your question: "${userMessage}"`)
-  lines.push('- Groq is temporarily rate-limited, so this is a local fallback. Ask one clarifying question or lock one next step while the quota window resets.')
   return lines.join('\n')
 }
 

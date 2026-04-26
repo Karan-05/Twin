@@ -53,6 +53,7 @@ export default function MeetingRoom() {
     setSettings,
     setSessionTitle,
     setPriorMeetingContext,
+    setRelatedSessions,
   } = useMeetingStore()
 
   const [editingTitle, setEditingTitle] = useState(false)
@@ -83,7 +84,8 @@ export default function MeetingRoom() {
     })
     const ctx = buildPriorContextSection(related)
     setPriorMeetingContext(ctx || null)
-  }, [meetingContext.meetingType, meetingContext.userRole, meetingContext.goal, transcript, setPriorMeetingContext])
+    setRelatedSessions(related)
+  }, [meetingContext.meetingType, meetingContext.userRole, meetingContext.goal, transcript, setPriorMeetingContext, setRelatedSessions])
 
   // Auto-save session to memory when recording stops (if substantive)
   const prevRecordingRef = useRef(isRecording)
@@ -256,7 +258,15 @@ export default function MeetingRoom() {
               LIVE
             </span>
           )}
-          {!apiKey && (
+          {apiKey ? (
+            <span
+              className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full text-xs font-medium"
+              title="Groq API key configured"
+            >
+              <KeyRound size={11} />
+              API key set
+            </span>
+          ) : (
             <button
               type="button"
               onClick={() => { void handleOpenSettings() }}
