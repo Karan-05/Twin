@@ -16,6 +16,7 @@ import { buildDecisionScaffoldingSection } from './decisionScaffolding'
 import type { MeetingState } from './meetingState'
 import { buildMeetingStateSection, deriveMeetingState } from './meetingState'
 import { withGroqTextBudget } from './groqBudget'
+import { buildSecondBrainBriefSection, deriveSecondBrainBrief } from './secondBrain'
 
 const VALID_TYPES = new Set(['question', 'talking_point', 'answer', 'fact_check', 'clarification'])
 const OWNER_OR_TIMELINE_PATTERN = /\b(owner|who can|who owns|make the call|deadline|by when|tomorrow|friday|next step|follow up|escalat|workaround|qa|legal|security review|q[1-4])\b/i
@@ -128,6 +129,11 @@ function buildUserMessage(
   const recentTranscript = buildTranscriptLines(promptChunks)
   const conversationSignalsSection = buildConversationSignalsSection(promptChunks)
   const decisionScaffoldingSection = buildDecisionScaffoldingSection(promptChunks, ctx)
+  const secondBrainBriefSection = buildSecondBrainBriefSection(
+    promptChunks,
+    ctx,
+    options.meetingState
+  )
   const meetingStateSection = buildMeetingStateSection(
     options.meetingState ?? {
       mode: 'probe',
@@ -154,6 +160,7 @@ function buildUserMessage(
     .replace(/{previous_suggestions_section}/g, previousSuggestionsSection)
     .replace(/{conversation_signals_section}/g, conversationSignalsSection)
     .replace(/{decision_scaffolding_section}/g, decisionScaffoldingSection)
+    .replace(/{second_brain_brief_section}/g, secondBrainBriefSection)
     .replace(/{meeting_state_section}/g, meetingStateSection)
     .replace(/{recent_transcript}/g, recentTranscript)
 
@@ -171,6 +178,10 @@ function buildUserMessage(
 
   if (!settings.liveSuggestionPrompt.includes('{meeting_state_section}')) {
     msg += `\n\n${meetingStateSection}`
+  }
+
+  if (!settings.liveSuggestionPrompt.includes('{second_brain_brief_section}')) {
+    msg += `\n\n${secondBrainBriefSection}`
   }
 
   if (!settings.liveSuggestionPrompt.includes('{trigger_reason_section}') && triggerReasonSection) {
@@ -463,6 +474,82 @@ function rankSuggestions(
   return chosen.slice(0, 3)
 }
 
+function compactTopic(topic: string | null): string {
+  if (!topic) return 'topic'
+  return topic.length > 28 ? `${topic.slice(0, 25).trimEnd()}…` : topic
+}
+
+function buildFallbackAnswerTitle(topic: string, category: ReturnType<typeof inferQuestionCategory>): string {
+  switch (category) {
+    case 'mechanism':
+      return `Explain how ${topic} works`
+    case 'comparison':
+      return `Compare the ${topic} paths`
+    case 'tradeoff':
+      return `Name the ${topic} tradeoff`
+    case 'implementation':
+      return `Answer the ${topic} plan`
+    case 'definition':
+      return `Define ${topic} clearly`
+    default:
+      return `Answer the ${topic} question`
+  }
+}
+
+function buildFallbackAnswerSay(topic: string, category: ReturnType<typeof inferQuestionCategory>): string {
+  switch (category) {
+    case 'mechanism':
+      return `Explain how ${topic} works: what goes in, how it changes across the interaction, what comes out, and where the failure mode shows up.`
+    case 'comparison':
+      return `Compare ${topic} on one axis first — reliability, consistency, cost, or speed — then explain what that difference changes in practice.`
+    case 'tradeoff':
+      return `Name the main trade-off in ${topic} first, then say which side matters more in this discussion.`
+    case 'implementation':
+      return `State what happens first, where the friction appears, and what must be true for ${topic} to work.`
+    case 'definition':
+      return `Say what ${topic} is first, then why it matters in practice instead of staying abstract.`
+    default:
+      return `Answer the question on ${topic} directly first, then add the one implication that changes the real decision.`
+  }
+}
+
+function buildFallbackTalkingPointSay(topic: string, category: ReturnType<typeof inferQuestionCategory>): string {
+  switch (category) {
+    case 'mechanism':
+      return `The useful point to add on ${topic} is where the system loses coherence or self-corrects, not just the happy path.`
+    case 'comparison':
+      return `The useful point to add on ${topic} is the comparison axis that actually changes the conclusion, not just surface differences.`
+    case 'tradeoff':
+      return `The useful point to add on ${topic} is the trade-off that determines whether this is robust or just impressive-looking.`
+    case 'implementation':
+      return `The useful point to add on ${topic} is the dependency that makes execution smooth or painful in practice.`
+    default:
+      return `The useful point to add on ${topic} is the practical consequence or hidden constraint that changes what you should believe next.`
+  }
+}
+
+function buildFallbackClarifierSay(topic: string, category: ReturnType<typeof inferQuestionCategory>): string {
+  switch (category) {
+    case 'mechanism':
+      return `Before I go deeper on ${topic}, which part matters most here — the interaction loop, the failure mode, or the recovery behavior?`
+    case 'comparison':
+      return `Before I go deeper on ${topic}, which comparison axis matters most here — reliability, speed, cost, or fit?`
+    case 'implementation':
+      return `Before I go deeper on ${topic}, what constraint matters most here — workflow, scale, timing, or trust?`
+    default:
+      return `Before I go deeper on ${topic}, what constraint matters most here — workflow, scale, timing, or trust?`
+  }
+}
+
+function looksLikePersonalFeedbackContext(
+  recentChunks: TranscriptChunk[],
+  currentQuestion: string | null,
+  meetingContext: MeetingContext
+): boolean {
+  const joined = `${meetingContext.goal ?? ''} ${recentChunks.map((chunk) => chunk.text).join(' ')} ${currentQuestion ?? ''}`.toLowerCase()
+  return /\b(feedback|manager|perception|perceived|communication|tone|frustrat|alignment|cleaner|better look like|example where this showed up|how this landed|came across|how you landed|stakeholder feedback)\b/.test(joined)
+}
+
 export function buildFallbackSuggestions(
   recentChunks: TranscriptChunk[],
   meetingContext: MeetingContext = { meetingType: '', userRole: '', goal: '', prepNotes: '' },
@@ -487,6 +574,7 @@ export function buildFallbackSuggestions(
     : null
   const questionCategory = currentQuestion ? inferQuestionCategory(currentQuestion) : null
   const primaryTopic = extractPrimaryTopic(recentChunks, `${currentQuestion ?? ''} ${meetingContext.goal ?? ''}`) ?? null
+  const secondBrainBrief = deriveSecondBrainBrief(recentChunks, meetingContext, meetingState)
 
   if (
     currentQuestion &&
@@ -564,7 +652,12 @@ export function buildFallbackSuggestions(
     return sanitizeSuggestions(fallbacks)
   }
 
-  if ((!currentQuestion || questionIntent === 'meeting_coaching') && meetingContext.meetingType === '1:1' && signals.risks[0]) {
+  if (
+    (!currentQuestion || questionIntent === 'meeting_coaching') &&
+    meetingContext.meetingType === '1:1' &&
+    signals.risks[0] &&
+    looksLikePersonalFeedbackContext(recentChunks, currentQuestion, meetingContext)
+  ) {
     const riskLine = signals.risks[0]
     const timeframe = recentChunks.find((chunk) => /\b(next month|this month|next quarter|this quarter|over the next month|over the next quarter|by\s+(?:monday|tuesday|wednesday|thursday|friday|next week|next month|end of day|eod|q[1-4]))\b/i.test(chunk.text))?.text ?? null
     fallbacks.push(
@@ -645,59 +738,38 @@ export function buildFallbackSuggestions(
 
   if (currentQuestion && questionIntent && questionIntent !== 'meeting_coaching') {
     const category = questionCategory ?? 'general'
-    const categoryLabel = (
-      category === 'mechanism' ? 'mechanism' :
-      category === 'comparison' ? 'comparison' :
-      category === 'tradeoff' ? 'trade-off' :
-      category === 'implementation' ? 'implementation' :
-      category === 'definition' ? 'definition' :
-      category === 'reason' ? 'reason' :
-      category === 'location' ? 'location' :
-      category === 'person' ? 'person' :
-      category === 'timing' ? 'timing' : 'question'
-    )
-    const answerSay = (
-      category === 'mechanism'
-        ? 'Walk it as a sequence: what goes in, how the system transforms it, what comes out, and which trade-off shapes the real behavior.'
-        : category === 'comparison'
-        ? 'Compare on one axis first — quality, speed, cost, or fit — then name the consequence of that difference.'
-        : category === 'tradeoff'
-        ? 'Name the main trade-off first, then which side matters more given the constraints here.'
-        : category === 'implementation'
-        ? 'State what happens first, where the friction appears, and what must be true for it to work.'
-        : category === 'location'
-        ? 'State the location directly, then explain why it matters in this context.'
-        : category === 'person'
-        ? 'Say who they are and what they do, then explain why they matter to the situation.'
-        : category === 'timing'
-        ? 'Give the timing directly, then name the one dependency that could change it.'
-        : 'Answer directly first, then add the one implication or dependency that would change the decision.'
-    )
+    const topic = compactTopic(primaryTopic || extractPrimaryTopic(recentChunks, currentQuestion) || 'topic')
     fallbacks.push(
       {
         id: generateId(),
         type: 'answer',
-        title: `Answer the ${categoryLabel} directly`,
-        detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. Answer the question itself first, then add the dependency or implication that changes the decision.`,
-        say: answerSay,
+        title: buildFallbackAnswerTitle(topic, category),
+        detail: `They asked: "${currentQuestion}"${actionableQuestion ? ` [${actionableQuestion.timestamp}]` : ''}. ${secondBrainBrief.bestMove ?? 'Answer the question itself first, then add the dependency or implication that changes the decision.'}`,
+        say: buildFallbackAnswerSay(topic, category),
         whyNow: 'A direct question is open — answer it before the room moves on.',
         listenFor: 'Whether they want more depth, a different angle, or a concrete next step.',
       },
       {
         id: generateId(),
         type: 'talking_point',
-        title: 'Add the practical consequence',
-        detail: 'Move beyond the surface answer into the trade-off or constraint that shapes the real decision.',
-        say: 'Beyond the direct answer, let me add the one trade-off or constraint that should shape what you decide next.',
+        title: secondBrainBrief.tension ? 'Name the hidden tension' : 'Add the practical consequence',
+        detail: secondBrainBrief.tension
+          ? `Do not stop at the surface answer. Name the real tension shaping the room: ${secondBrainBrief.tension}`
+          : 'Move beyond the surface answer into the trade-off or constraint that shapes the real decision.',
+        say: secondBrainBrief.tension
+          ? `The hidden tension here is ${secondBrainBrief.tension.charAt(0).toLowerCase()}${secondBrainBrief.tension.slice(1)}`
+          : buildFallbackTalkingPointSay(topic, category),
         whyNow: 'A plain answer gets stronger when paired with the practical angle the room can act on.',
         listenFor: 'Which side of the trade-off or implication they weight more.',
       },
       {
         id: generateId(),
         type: 'clarification',
-        title: 'Ask the one constraining question',
-        detail: 'One narrow follow-up can make the answer twice as precise without derailing the conversation.',
-        say: 'Before I go deeper — what constraint matters most here: scale, version, workflow, or timing?',
+        title: secondBrainBrief.memoryAnchors.length > 0 ? 'Sharpen the real constraint' : 'Ask the one constraining question',
+        detail: secondBrainBrief.memoryAnchors.length > 0
+          ? `One narrow follow-up should clarify the variable that matters most now: ${secondBrainBrief.memoryAnchors[0]}.`
+          : 'One narrow follow-up can make the answer twice as precise without derailing the conversation.',
+        say: buildFallbackClarifierSay(topic, category),
         whyNow: 'The right clarifier makes the answer actionable instead of general.',
         listenFor: 'A version, use case, or dependency that materially changes the answer.',
       }

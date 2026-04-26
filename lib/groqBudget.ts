@@ -3,6 +3,7 @@ const SOFT_TPM_BUDGET = 24000
 const SKIP_LOW_PRIORITY = '__groq_skip_low_priority__'
 const FALLBACK_HIGH_PRIORITY = '__groq_fallback_high_priority__'
 const MAX_HIGH_PRIORITY_WAIT_MS = 20_000
+const DEFAULT_PROVIDER_COOLDOWN_MS = 15_000
 
 type Priority = 'high' | 'low'
 
@@ -14,6 +15,7 @@ type Reservation = {
 
 const reservations: Reservation[] = []
 let highPriorityChain: Promise<unknown> = Promise.resolve()
+let providerCooldownUntil = 0
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -83,7 +85,7 @@ function parseRateLimitDelayMs(error: unknown): number | null {
   }
 
   return message.includes('rate_limit_exceeded') || message.includes('429')
-    ? 5_000
+    ? DEFAULT_PROVIDER_COOLDOWN_MS
     : null
 }
 
@@ -94,6 +96,14 @@ async function executeWithBudget<T>(
   fn: () => Promise<T>,
   attempt = 0
 ): Promise<T> {
+  const providerWaitMs = Math.max(0, providerCooldownUntil - Date.now())
+  if (providerWaitMs > 0) {
+    if (priority === 'low') {
+      throw new Error(SKIP_LOW_PRIORITY)
+    }
+    throw new Error(FALLBACK_HIGH_PRIORITY)
+  }
+
   const estimatedTokens = estimateTokens(promptText, maxTokens)
   const waitMs = computeWaitMs(estimatedTokens)
 
@@ -114,6 +124,9 @@ async function executeWithBudget<T>(
   } catch (error) {
     release(reservation)
     const retryDelay = parseRateLimitDelayMs(error)
+    if (retryDelay) {
+      providerCooldownUntil = Math.max(providerCooldownUntil, Date.now() + retryDelay)
+    }
     if (retryDelay && attempt < 1) {
       if (priority === 'low' && retryDelay > 4_000) {
         throw new Error(SKIP_LOW_PRIORITY)
