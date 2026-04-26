@@ -85,6 +85,82 @@ function buildKnowledgeSupportLine(topic: string, category: QuestionCategory): s
   }
 }
 
+function buildKnowledgeOpeningLine(
+  topic: string,
+  category: QuestionCategory,
+  sourceText: string
+): string {
+  const lower = sourceText.toLowerCase()
+
+  if (/\bllm\b|\blarge language model\b/.test(lower)) {
+    return 'An LLM tokenizes the prompt, maps those tokens into embeddings, uses attention to relate each token to the rest of the context, and then predicts the next token repeatedly until it forms a full answer.'
+  }
+
+  switch (category) {
+    case 'definition':
+      return `${topic} is best understood by stating what it is, what job it does, and why that matters here.`
+    case 'mechanism':
+      return `${topic} works as a flow from input, to representation, to processing, to output, with one main constraint shaping the result.`
+    case 'comparison':
+      return `The cleanest way to compare ${topic} is on one axis first, then explain what that difference changes in practice.`
+    case 'tradeoff':
+      return `The important thing about ${topic} is the trade-off it forces and which side of that trade-off matters more here.`
+    case 'implementation':
+      return `${topic} becomes concrete when you name the first step, the friction point, and the dependency that decides whether rollout stays smooth.`
+    default:
+      return `The direct answer on ${topic} should come first, followed by the implication that changes the real decision.`
+  }
+}
+
+function buildKnowledgeExpansionBullets(
+  topic: string,
+  category: QuestionCategory,
+  sourceText: string
+): string[] {
+  const lower = sourceText.toLowerCase()
+
+  if (/\bllm\b|\blarge language model\b/.test(lower)) {
+    return [
+      '- Tokenization breaks text into model-readable pieces, which is how the system turns a sentence into units it can process.',
+      '- Embeddings turn those tokens into vectors, and attention is what lets the model weigh which earlier words matter for the next prediction.',
+      '- Training is when the model learns the weights by predicting missing or next tokens across massive text corpora; inference is the live moment when those learned weights are used to answer a prompt.',
+      '- The model does not “understand” like a human does; it builds useful statistical context from patterns in the prompt and then decodes one next token at a time.',
+    ]
+  }
+
+  switch (category) {
+    case 'definition':
+      return [
+        `- Start with what ${topic} is in plain language, then say what job it is actually doing in the system or workflow.`,
+        '- Add the practical implication that helps the room reason about it instead of only naming the concept.',
+      ]
+    case 'mechanism':
+      return [
+        '- Walk through the stages in order so the room sees how the pieces connect instead of hearing isolated jargon.',
+        '- End on the bottleneck or failure mode, because that is usually what makes the explanation useful in a real meeting.',
+      ]
+    case 'comparison':
+      return [
+        '- Pick one comparison axis first so the answer does not sprawl into a list of disconnected pros and cons.',
+        '- Then say what that axis changes in the decision the room is actually making.',
+      ]
+    case 'tradeoff':
+      return [
+        '- State both sides of the trade-off clearly so the room can tell what is gained and what is being sacrificed.',
+        '- Then say which side matters more in this exact context and why.',
+      ]
+    case 'implementation':
+      return [
+        '- Name the first operational step, the first point of friction, and the dependency that usually determines whether execution stays on schedule.',
+        '- That turns the answer from abstract advice into something the room can actually sequence.',
+      ]
+    default:
+      return [
+        '- Answer plainly first, then sharpen the consequence or dependency that changes what the room should do next.',
+      ]
+  }
+}
+
 function buildRoleAwareDetailFallback(
   topic: string,
   meetingContext: MeetingContext,
@@ -168,6 +244,22 @@ function buildRoleAwareDetailFallback(
         ? `> "Say: ${suggestionSay}"`
         : '> "Say: Week 1 is a kickoff with operations to map the current workflow and keep the rollout lightweight. Week 2 is a review of the first working path with operations and finance so we can decide now, not wait for Q4."',
       '- [ ] Next step to lock: confirm who from operations and finance needs to see that walkthrough, and by when.',
+    ]
+  }
+
+  if (
+    meetingContext.meetingType === 'Brainstorm' &&
+    /\b(brainstorm|loop|looping|narrow|decision|deciding|criteria|options)\b/i.test(liveText)
+  ) {
+    return [
+      `**In short:** Stop adding options and set the decision rule now so the room can converge without killing momentum.`,
+      openQuestion ? `- Live thread: "${openQuestion.text}" [${openQuestion.timestamp}]` : '- The room is drifting because more ideas are arriving faster than decisions.',
+      '- Name the tension explicitly: this week needs **one testable idea**, while the stakeholders are split on **speed versus polish**.',
+      '- Set the frame in one sentence: judge the options against activation impact, differentiation, support cost, and what can be tested inside two weeks.',
+      hasConcreteSay
+        ? `> "Say: ${suggestionSay}"`
+        : '> "Say: Let’s stop generating options for a moment and choose the decision rule first. We need one idea we can test this week, so let’s judge these on activation impact, differentiation, support cost, and whether we can ship a credible version in two weeks."',
+      '- [ ] Next step to lock: choose the single option to test this week and name the owner before the brainstorm ends.',
     ]
   }
 
@@ -332,22 +424,25 @@ function buildLocalDetailedFallback(
   }
 
   if ((suggestionType === 'answer' || suggestionType === 'talking_point') && knowledgeQuestion) {
+    const sourceText = `${openQuestion?.text ?? ''} ${suggestionTitle} ${suggestionDetail} ${meetingContext.goal ?? ''}`
+    const openingLine = buildKnowledgeOpeningLine(topic, category, sourceText)
+    const expansionBullets = buildKnowledgeExpansionBullets(topic, category, sourceText)
     return [
       evidenceLine,
       '',
-      `**In short:** Answer the question on **${topic}** itself first — then bridge it back to why it matters here.`,
+      `**In short:** ${openingLine}`,
       secondBrainBrief.tension
         ? `- Read of the room: ${secondBrainBrief.tension}`
         : '- Read of the room: the answer needs to help the participant in the live conversation, not just explain the topic.',
-      buildKnowledgeSupportLine(topic, category),
+      ...expansionBullets,
       questionIntent === 'domain_knowledge'
         ? '- Treat it as a domain or product question: say what it is for, where it fits, and which variable would change the recommendation.'
         : questionIntent === 'direct_answer'
           ? '- Treat it as a direct answer moment: answer plainly, then add the one concrete implication, dependency, or next move that makes the answer useful.'
-        : '- If the answer depends on scale, version, date, configuration, or policy, state that dependency plainly instead of bluffing.',
+          : '- If the answer depends on scale, version, date, configuration, or policy, state that dependency plainly instead of bluffing.',
       suggestionSay
         ? `> "Say: ${suggestionSay}"`
-        : `> "Say: The direct answer on ${topic} comes first — then I can connect it to the implication that matters most here."`,
+        : `> "Say: ${openingLine}"`,
       `- [ ] Next step to lock: confirm whether they want more depth, a comparison, or the practical implication next.`,
     ].join('\n')
   }
